@@ -138,8 +138,20 @@ for (let i = 0; i < RUN_W.length; i++) {
   const a = corners[i % 4];
   const b = corners[(i + 1) % 4];
   const w = RUN_W[i];
-  const from: Vec3 = [a[0], level, a[2]];
-  const to: Vec3 = [b[0], level + RUN_RISE, b[2]];
+
+  // A narrow run has to be pushed back against the shaft, not left on the
+  // corner-pad centreline. Otherwise the ledge's inner edge sits 8.8 - w/2 out
+  // from the tower and the slot behind it is 0.7 wide — wider than the marble,
+  // which would drop through a hole nobody can see from above. Whichever axis
+  // the two corners share is the one that gets pinned to the wall.
+  const offset = SHAFT + w / 2;
+  const pin = (p: Vec3): Vec3 =>
+    a[0] === b[0]
+      ? [Math.sign(a[0]) * offset, p[1], p[2]]
+      : [p[0], p[1], Math.sign(a[2]) * offset];
+
+  const from = pin([a[0], level, a[2]]);
+  const to = pin([b[0], level + RUN_RISE, b[2]]);
 
   // Corner pad at the foot of the run.
   blocks.push(box([a[0], level - 0.25, a[2]], [3.6, 0.5, 3.6], 'sandstone', 'cobblestone', { color: STONE }));
@@ -231,8 +243,8 @@ export const cathedralLevel: LevelDef = {
   place: 'Oakland, forty-two storeys of it',
   hint: 'Every ledge is caught by the setback below it. You lose height, not the run — keep climbing.',
   difficulty: 'advanced',
-  parTime: 95000,
-  goldTime: 62000,
+  parTime: 82000,
+  goldTime: 52000,
   spawn: { pos: [-70, 0.5, 0], yaw: Math.PI / 2 },
   killY: -8,
   sky: {

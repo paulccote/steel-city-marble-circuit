@@ -110,6 +110,7 @@ export class Level {
   private endPad: THREE.Vector3 | null = null;
   private startPad: THREE.Vector3 | null = null;
   private checkpoint: THREE.Vector3 | null = null;
+  private checkpoints: { mesh: THREE.Object3D; pos: THREE.Vector3; armed: boolean }[] = [];
 
   private marbleMesh!: THREE.Mesh;
   private accumulator = 0;
@@ -365,6 +366,7 @@ export class Level {
           const mesh = makeCheckpoint();
           mesh.position.copy(v3(e.pos));
           this.scene.add(mesh);
+          this.checkpoints.push({ mesh, pos: v3(e.pos), armed: false });
           break;
         }
         case 'prop':
@@ -486,6 +488,7 @@ export class Level {
       this.elapsed = 0;
       this.gemsCollected = 0;
       this.checkpoint = null;
+      for (const c of this.checkpoints) c.armed = false;
       this.lastBeat = 99;
       // The gem chime climbs as you collect; a fresh run has to start low again.
       this.audio?.resetGemPitch();
@@ -694,6 +697,18 @@ export class Level {
         this.gemsCollected++;
         this.effects.gemPop(g.pos, 0xff4fd8);
         this.audio?.gem(this.gemsCollected, this.gemsTotal);
+      }
+    }
+
+    // Checkpoints arm once and never disarm, so falling back past one cannot
+    // cost the player progress they already earned.
+    for (const c of this.checkpoints) {
+      if (c.armed) continue;
+      if (p.distanceToSquared(c.pos) < (reach + 1.4) ** 2) {
+        c.armed = true;
+        this.checkpoint = c.pos.clone().setY(c.pos.y + this.marble.radius);
+        this.effects.sparkle(c.pos, 0xffd23f);
+        this.audio?.play('pickup');
       }
     }
 

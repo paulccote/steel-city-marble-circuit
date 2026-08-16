@@ -55,7 +55,6 @@ export class Hud {
 
   private lastMessage = '';
   private lastHeld: PowerupType | null = null;
-  private lastPhase = '';
   private lastActives = '';
   private frameTimes: number[] = [];
   private showFps = true;
@@ -96,7 +95,6 @@ export class Hud {
   reset() {
     this.lastMessage = '';
     this.lastHeld = null;
-    this.lastPhase = '';
     this.lastActives = '';
     this.message.classList.remove('show');
     this.frameTimes.length = 0;
@@ -115,23 +113,12 @@ export class Hud {
     this.gems.style.display = level.gemsTotal > 0 ? 'flex' : 'none';
 
     if (level.heldPowerup !== this.lastHeld) {
-      // A held powerup also clears on respawn, and that must not look like a
-      // use. A real use only happens between two consecutive playing frames;
-      // a respawn always passes through 'dead' or 'countdown' first.
-      const used =
-        this.lastHeld !== null &&
-        level.heldPowerup === null &&
-        level.phase === 'playing' &&
-        this.lastPhase === 'playing';
-
       this.powerupIcon.replaceChildren();
       if (level.heldPowerup) this.powerupIcon.append(POWERUP_ICON[level.heldPowerup]());
       this.powerup.classList.toggle('filled', !!level.heldPowerup);
       this.powerup.dataset.type = level.heldPowerup ?? '';
       this.lastHeld = level.heldPowerup;
-      if (used) this.flashPowerupUse();
     }
-    this.lastPhase = level.phase;
 
     this.renderActives(level);
     this.renderMessage(level);
@@ -204,11 +191,7 @@ export class Hud {
     this.hint.classList.toggle('show', showHint);
   }
 
-  /**
-   * Pop the slot. Fired automatically from `update` when a held powerup is
-   * spent; kept public so Level can call it directly if it ever grows a
-   * "powerup used" callback, which would be exact rather than inferred.
-   */
+  /** Pop the slot. Driven by `Level.onPowerupUsed`. */
   flashPowerupUse() {
     this.powerup.classList.remove('used');
     // Force a reflow so a second use inside the animation window replays it.

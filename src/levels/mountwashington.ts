@@ -224,7 +224,7 @@ for (const [z0, z1, w, iced] of PAVE) {
 // lands so overshooting the turn is a bounce rather than a fall.
 blocks.push(
   box([35.0, 28.4, -13], [0.4, 1.2, 16], 'steel', 'steel'),
-  box([37.9, 28.9, -21.4], [5.5, 1.8, 0.5], 'steel', 'steel'),
+  box([37.9, 28.9, -20.7], [5.5, 1.8, 0.6], 'steel', 'steel'),
 );
 
 // The houses of Grandview, which double as the safe wall on the uphill side.
@@ -275,8 +275,8 @@ export const mountWashingtonLevel: LevelDef = {
   place: 'Mount Washington, up to Grandview Avenue',
   hint: 'Ice does not spin you out — it locks your heading. Choose the line before the patch, not on it.',
   difficulty: 'expert',
-  parTime: 88000,
-  goldTime: 55000,
+  parTime: 80000,
+  goldTime: 50000,
   spawn: { pos: [-56, 0.5, -18], yaw: Math.PI / 2 },
   killY: -6,
   sky: {

@@ -246,8 +246,8 @@ export const clementeLevel: LevelDef = {
   place: 'Roberto Clemente Bridge, over the Allegheny',
   hint: 'A flat jump carries eleven units at full speed. The last gap is fourteen — take the super jump with you.',
   difficulty: 'intermediate',
-  parTime: 72000,
-  goldTime: 44000,
+  parTime: 68000,
+  goldTime: 42000,
   spawn: { pos: spawn, yaw: Math.PI / 2 },
   killY: -11,
   sky: {

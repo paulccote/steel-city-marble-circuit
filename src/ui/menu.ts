@@ -215,7 +215,14 @@ export class Shell {
     );
 
     left.append(brand, buttons, this.menuFoot);
-    screen.append(left, el('div', 'menu-version', 'v1.0 · built for the incline'));
+    // Counted from the roster rather than written down: the previous string
+    // named the one course that existed at the time and went stale the moment
+    // a second was added.
+    const n = this.deps.levels.length;
+    screen.append(
+      left,
+      el('div', 'menu-version', `v1.0 · ${n} course${n === 1 ? '' : 's'} · Pittsburgh, PA`),
+    );
     return screen;
   }
 

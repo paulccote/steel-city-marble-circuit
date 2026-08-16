@@ -109,17 +109,21 @@ for (let i = 0; i < 12; i++) {
 entities.push({ kind: 'startPad', pos: [-12, 0, 0] });
 
 // --------------------------------------------------------------------- gems
-// Crest gems sit three units past the top and 0.7 above it. That is the one
-// place a launch arc passes through at any speed between 10 and 24 m/s, so the
-// reward for airtime never turns into a demand for an exact entry speed.
-const crestGem = (x: number, y: number): Entity => ({ kind: 'gem', pos: [x + 3, y + 0.7, 0] });
+// Crest gems sit on the crest itself. It is tempting to hang them out in the
+// launch arc, but the arc's height at a given x swings by two units between a
+// 10 m/s crest and a 16 m/s one, and a gem you can only reach at one entry
+// speed is a tax on airtime rather than a reward for it. The crest is the one
+// point every line passes through.
+const crestGem = (x: number, y: number): Entity => ({ kind: 'gem', pos: [x, y + 0.55, 0] });
 
 entities.push(
   { kind: 'gem', pos: [12, 4.5, 0] },
   { kind: 'gem', pos: [24, 9.3, 0] },
   { kind: 'gem', pos: [36, 14.1, 0] },
   crestGem(42, 16),
-  { kind: 'gem', pos: [58, 7.2, 0] },
+  // Far enough down the drop that it is collected whether the marble lands
+  // short of it and rolls through, or is still flying and passes through it.
+  { kind: 'gem', pos: [63, 4.3, 0] },
   { kind: 'gem', pos: [70, 3.9, 0] },
   crestGem(84, 8),
   { kind: 'gem', pos: [108, 0.6, 0] },
@@ -252,8 +256,8 @@ export const kennywoodLevel: LevelDef = {
   place: 'Kennywood, above the Monongahela',
   hint: 'Height is speed and speed is air. Do not brake into the ravine — the lip needs fifteen.',
   difficulty: 'advanced',
-  parTime: 78000,
-  goldTime: 47000,
+  parTime: 70000,
+  goldTime: 42000,
   spawn: { pos: [-12, 0.5, 0], yaw: Math.PI / 2 },
   killY: -20,
   sky: {

@@ -512,6 +512,56 @@ async function boot() {
   // `#levels` opens straight into course select. Comparison runs need to
   // screenshot a specific menu without synthesising clicks first.
   if (location.hash === '#levels') goto('levels');
+
+  // TEMP-ORBIT-AUDIT
+  if (location.hash === '#audit') {
+    const rows: string[] = [];
+    for (const def of LEVELS) {
+      orbitFrom.fromArray(def.spawn.pos);
+      const endPad = def.entities.find((e) => e.kind === 'endPad');
+      orbitTo.fromArray(endPad ? endPad.pos : def.spawn.pos);
+      const dx = orbitTo.x - orbitFrom.x;
+      const dz = orbitTo.z - orbitFrom.z;
+      const broadside =
+        Math.hypot(dx, dz) > 4
+          ? Math.atan2(-dx, dz)
+          : Math.atan2(-Math.cos(def.spawn.yaw), -Math.sin(def.spawn.yaw));
+      const score = (side: number) => {
+        let worst = Infinity;
+        for (let ti = 0; ti <= 6; ti++) {
+          for (const r of [20, 23, 26]) {
+            for (const h of [15, 17, 19]) {
+              for (let ai = 0; ai <= 12; ai++) {
+                orbitTarget.lerpVectors(orbitFrom, orbitTo, 0.08 + (ti / 6) * 0.3);
+                const a = side + (ai / 12 - 0.5) * 1.6;
+                worst = Math.min(
+                  worst,
+                  clearanceAt(
+                    def,
+                    orbitTarget.x + Math.cos(a) * r,
+                    orbitTarget.y + 1.5 + h,
+                    orbitTarget.z + Math.sin(a) * r,
+                  ),
+                );
+              }
+            }
+          }
+        }
+        return worst;
+      };
+      const chosen = pickOrbitSide(def, broadside);
+      const other = Math.abs(chosen - broadside) < 0.01 ? broadside + Math.PI : broadside;
+      rows.push(
+        `${def.id.padEnd(16)} blocks=${String(def.blocks.length).padStart(4)}  ` +
+          `run=${Math.hypot(dx, dz).toFixed(0).padStart(3)}  ` +
+          `CHOSEN=${score(chosen).toFixed(1).padStart(7)}  rejected=${score(other).toFixed(1).padStart(7)}  ` +
+          `${score(chosen) > 0 ? 'CLEAR' : '*** BURIED ***'}`,
+      );
+    }
+    document.body.innerHTML =
+      `<pre style="position:fixed;inset:0;background:#fff;color:#000;font:15px/1.7 monospace;padding:20px;z-index:99">` +
+      `ORBIT AUDIT — worst clearance over full sway/radius/height envelope\n\n${rows.join('\n')}</pre>`;
+  }
 }
 
 void boot();

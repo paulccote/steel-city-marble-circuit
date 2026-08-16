@@ -229,7 +229,7 @@ export const pointLevel: LevelDef = {
   place: 'Point State Park, at the confluence',
   hint: 'Steer early. Wet stone will not fix a late line, and the ring is banked for a reason.',
   difficulty: 'intermediate',
-  parTime: 62000,
+  parTime: 60000,
   goldTime: 34000,
   spawn: { pos: [78, 0.5, 0], yaw: -Math.PI / 2 },
   killY: -6,
