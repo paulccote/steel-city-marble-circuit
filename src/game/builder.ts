@@ -178,7 +178,7 @@ const TEXTURE_DENSITY: Record<TextureName, number> = {
   grass: 0.3,
   water: 0.04,
   asphalt: 0.16,
-  glass: 0.18,
+  glass: 0.28,
   wood: 0.42,
   rust: 0.5,
   ice: 0.2,
@@ -203,7 +203,7 @@ interface SurfaceLook {
 }
 
 const LOOK: Partial<Record<TextureName, SurfaceLook>> = {
-  cobblestone: { roughness: 0.82, metalness: 0.0, normalScale: 1.15, tint: 1.12 },
+  cobblestone: { roughness: 0.88, metalness: 0.0, normalScale: 1.0 },
   brick: { roughness: 0.9, metalness: 0.0, normalScale: 0.9, tint: 1.06 },
   concrete: { roughness: 0.92, metalness: 0.0, normalScale: 0.55 },
   asphalt: { roughness: 0.95, metalness: 0.0, normalScale: 0.5 },
@@ -214,7 +214,7 @@ const LOOK: Partial<Record<TextureName, SurfaceLook>> = {
   wood: { roughness: 0.72, metalness: 0.0, normalScale: 0.7, tint: 1.05 },
   incline: { roughness: 0.42, metalness: 0.1, normalScale: 0.5, env: 1.2, tint: 1.08 },
   grass: { roughness: 0.95, metalness: 0.0, normalScale: 0.5, tint: 1.1 },
-  glass: { roughness: 0.06, metalness: 0.9, env: 2.4, tint: 1.1 },
+  glass: { roughness: 0.28, metalness: 0.3, env: 0.9, tint: 0.8 },
   ice: { roughness: 0.08, metalness: 0.2, env: 2.0 },
   water: { roughness: 0.1, metalness: 0.6, env: 1.8 },
   yellowRamp: { roughness: 0.45, metalness: 0.0, env: 1.1, tint: 1.15 },

@@ -1,7 +1,7 @@
 import type { Difficulty, LevelDef } from '../game/types';
 import { formatTime } from './hud';
 import { el, button, iconButton } from './dom';
-import { ICON, riversMark } from './icons';
+import { ICON, riversMark, wordmark } from './icons';
 import { drawLevelMap } from './preview';
 import type { Quality, Settings } from './settings';
 
@@ -191,7 +191,7 @@ export class Shell {
     brand.append(riversMark());
     const chip = el('div', 'brand-chip', 'Pittsburgh, PA');
     const title = el('div', 'brand-title');
-    title.append(el('span', 'brand-marble', 'Marble'), el('span', 'brand-kablam', 'Kablam'));
+    title.append(el('span', 'brand-marble', 'Marble'), wordmark());
     brand.append(chip, title, el('div', 'brand-rule'), el('div', 'brand-sub', 'Steel City Marble Circuit'));
 
     const buttons = el('div', 'menu-buttons');

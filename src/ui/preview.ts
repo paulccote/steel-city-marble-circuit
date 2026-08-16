@@ -148,8 +148,9 @@ export function drawLevelMap(canvas: HTMLCanvasElement, def: LevelDef) {
     ctx.rotate(-f.yaw);
     ctx.fillStyle = color;
     // Higher ground is lit more strongly, which is the only depth cue a plan
-    // view gets.
-    ctx.globalAlpha = alpha * (0.55 + lift * 0.45);
+    // view gets — but the floor stays high, or the course loses its fight with
+    // the scenery drawn underneath it.
+    ctx.globalAlpha = alpha * (0.74 + lift * 0.26);
     if (blk.kind === 'arc') {
       // Canvas angles run the same way the arc builder sweeps them (x = cos,
       // z = sin), so the sweep maps across without a sign flip.
@@ -168,7 +169,7 @@ export function drawLevelMap(canvas: HTMLCanvasElement, def: LevelDef) {
     ctx.restore();
   };
 
-  for (const blk of def.blocks) if (blk.noCollide) drawBlock(blk, 0.18);
+  for (const blk of def.blocks) if (blk.noCollide) drawBlock(blk, 0.13);
   for (const blk of def.blocks) if (!blk.noCollide) drawBlock(blk, 1);
 
   // Entities on top, in the colours they have in the world.

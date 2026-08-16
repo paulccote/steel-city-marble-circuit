@@ -619,6 +619,9 @@ body {
   flex-direction: column;
   gap: 26px;
   max-width: 520px;
+  /* Inherited by the small type in this column so nothing depends on the scrim
+     alone; buttons and the wordmark override it with their own treatment. */
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
 }
 
 .brand {
@@ -651,44 +654,38 @@ body {
   line-height: 0.92;
 }
 
+/* White text with a hard black outline is the one treatment that survives both
+   a white sky and a black wall, so the small line gets it too. */
 .brand-marble {
   font-family: var(--display);
   font-weight: 900;
   font-size: 34px;
   letter-spacing: 0.42em;
   text-transform: uppercase;
-  color: #e8eef4;
+  color: #f2f6fa;
   text-shadow:
-    -1px -1px 0 #000,
-    1px -1px 0 #000,
-    -1px 1px 0 #000,
-    1px 1px 0 #000,
-    0 6px 16px rgba(0, 0, 0, 0.8);
-  margin-bottom: 2px;
+    -2px -2px 0 #04060a,
+    2px -2px 0 #04060a,
+    -2px 2px 0 #04060a,
+    2px 2px 0 #04060a,
+    0 -2px 0 #04060a,
+    0 2px 0 #04060a,
+    -2px 0 0 #04060a,
+    2px 0 0 #04060a,
+    0 0 16px rgba(0, 0, 0, 0.95),
+    0 6px 14px rgba(0, 0, 0, 0.85);
+  margin-bottom: 4px;
 }
 
-.brand-kablam {
-  font-family: var(--display);
-  font-weight: 900;
-  font-size: 94px;
-  letter-spacing: -0.01em;
-  text-transform: uppercase;
-  background: linear-gradient(180deg, #fff2c0 0%, var(--gold) 40%, #cf8f05 62%, #ffdf7d 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  /* Shadows paint behind the clipped gradient, so this reads as an outline. */
-  text-shadow:
-    -3px -3px 0 #000,
-    3px -3px 0 #000,
-    -3px 3px 0 #000,
-    3px 3px 0 #000,
-    0 -4px 0 #000,
-    0 4px 0 #000,
-    -4px 0 0 #000,
-    4px 0 0 #000,
-    0 10px 0 rgba(0, 0, 0, 0.55),
-    0 18px 34px rgba(0, 0, 0, 0.8);
+/* The gold fill and the black stroke are ordered inside the SVG itself; these
+   two halos are what carry the word over a bright sky. */
+.wordmark {
+  display: block;
+  width: min(478px, 100%);
+  height: auto;
+  filter:
+    drop-shadow(0 0 20px rgba(0, 0, 0, 0.95))
+    drop-shadow(0 10px 14px rgba(0, 0, 0, 0.85));
 }
 
 /* Steelworks hazard stripe. */
@@ -1571,8 +1568,8 @@ input.range::-moz-range-thumb {
 /* 1280x720 laptops: the title and the big buttons are what has to give. The
    breakpoint sits below 800 so the full-size treatment survives at 1280x800. */
 @media (max-height: 760px) {
-  .brand-kablam {
-    font-size: 78px;
+  .wordmark {
+    width: min(400px, 100%);
   }
   .brand-marble {
     font-size: 28px;
@@ -1607,8 +1604,8 @@ input.range::-moz-range-thumb {
 }
 
 @media (max-height: 640px) {
-  .brand-kablam {
-    font-size: 60px;
+  .wordmark {
+    width: min(320px, 100%);
   }
   .brand-rule,
   .rivers-mark {

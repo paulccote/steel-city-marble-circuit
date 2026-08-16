@@ -93,6 +93,44 @@ export const ICON = {
   close: () => svg('<path d="M5.5 5.5l13 13M18.5 5.5l-13 13"/>'),
 };
 
+/**
+ * The KABLAM wordmark.
+ *
+ * This is SVG rather than styled HTML text for one reason: an HTML gradient
+ * wordmark has to use `background-clip: text`, and `text-shadow` paints *above*
+ * the element background — so the black outline copies bury the gradient and
+ * the word renders as a black silhouette that disappears against any dark
+ * backdrop. SVG's `paint-order` puts the stroke under the fill by contract, so
+ * the gold always survives, and a stroke plus a dark halo means the word holds
+ * over bright sky and dark brick alike.
+ *
+ * `textLength` pins the width, so a machine without Arial Black still lays the
+ * wordmark out in exactly the same box.
+ */
+export function wordmark(): SVGElement {
+  const root = document.createElementNS(NS, 'svg');
+  root.setAttribute('viewBox', '0 0 640 132');
+  root.setAttribute('preserveAspectRatio', 'xMinYMid meet');
+  root.setAttribute('aria-label', 'Kablam');
+  root.classList.add('wordmark');
+  root.innerHTML = `
+    <defs>
+      <linearGradient id="kbl-fill" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#fff7d6"/>
+        <stop offset="0.38" stop-color="#ffc82e"/>
+        <stop offset="0.60" stop-color="#c98607"/>
+        <stop offset="0.80" stop-color="#ffd85f"/>
+        <stop offset="1" stop-color="#fff0b4"/>
+      </linearGradient>
+    </defs>
+    <text x="14" y="110" textLength="612" lengthAdjust="spacingAndGlyphs"
+          font-family="Arial Black, Arial Bold, Helvetica Neue, Impact, sans-serif"
+          font-size="130" font-weight="900"
+          paint-order="stroke" stroke="#04060a" stroke-width="17" stroke-linejoin="round"
+          fill="url(#kbl-fill)">KABLAM</text>`;
+  return root;
+}
+
 /** The three rivers meeting at the Point — the mark on the title screen. */
 export function riversMark(): SVGElement {
   const root = document.createElementNS(NS, 'svg');

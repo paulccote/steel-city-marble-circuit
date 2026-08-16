@@ -1,5 +1,5 @@
 import type { Block, Entity, LevelDef, Vec3 } from '../game/types';
-import { arcWalk, box, deg, downtownSkyline, gemLine, lampRow, pier } from './helpers';
+import { arcWalk, box, deg, downtownSkyline, lampRow, pier } from './helpers';
 
 /**
  * Level 2 — Point State Park.
@@ -181,12 +181,14 @@ entities.push(
 // A helix around the jet: 3.4 up over 29 units of arc, under seven degrees.
 // After the ring it is meant to be a victory lap, not another test.
 blocks.push(
+  // No kerb on this one. A kerb at its foot would be a 0.35 lip standing
+  // between the basin ramp and the helix, and a 0.2-radius marble cannot climb
+  // 0.35 — it would seal the only way out of the fountain.
   ...arcWalk([0, BASIN_Y, 0], 6.5, 3, deg(285), deg(255), {
     rise: 3.4,
     thickness: 0.5,
     texture: 'concrete',
     surface: 'default',
-    outerWall: 0.35,
   }),
   { kind: 'cylinder', pos: [0, 0.7, 0], radius: 4, height: 3.4, segments: 28,
     texture: 'sandstone', surface: 'default' },

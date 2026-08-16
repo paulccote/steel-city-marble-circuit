@@ -205,6 +205,8 @@ function startLevel(def: LevelDef) {
   audio.resume();
   level?.dispose();
   level = new Level(def, renderer, aspect(), audio);
+  // Exact, rather than inferring a use from the held slot going empty.
+  level.onPowerupUsed = () => hud.flashPowerupUse();
   hud.reset();
   hud.show(true);
   reportedFinish = false;
@@ -258,6 +260,7 @@ const orbitFrom = new THREE.Vector3();
 const orbitTo = new THREE.Vector3();
 const orbitTarget = new THREE.Vector3();
 let orbitT = 0;
+let orbitBase = 0;
 let backdropPending = 0;
 let backdropBusy = false;
 
@@ -287,7 +290,86 @@ function resetOrbit(def: LevelDef) {
   orbitFrom.fromArray(def.spawn.pos);
   const end = def.entities.find((e) => e.kind === 'endPad');
   orbitTo.fromArray(end ? end.pos : def.spawn.pos);
+
+  // Stand broadside to the run from start to finish, so the course crosses the
+  // frame instead of receding to a point. Sitting behind the spawn instead
+  // sounds right and is not: level authors put the scenery that backs a start
+  // pad *behind* the camera there, so you end up staring at the back of a
+  // facade.
+  const dx = orbitTo.x - orbitFrom.x;
+  const dz = orbitTo.z - orbitFrom.z;
+  const yaw = def.spawn.yaw;
+  const broadside =
+    Math.hypot(dx, dz) > 4
+      ? Math.atan2(-dx, dz)
+      : Math.atan2(-Math.cos(yaw), -Math.sin(yaw));
+  orbitBase = pickOrbitSide(def, broadside);
   updateOrbit(0);
+}
+
+/**
+ * Broadside leaves two choices, and they are not equivalent: this level's
+ * downtown skyline is a ring of towers *around* the course, so one side parks
+ * the camera inside a glass facade and the other has the towers standing behind
+ * the plaza where they belong. Rather than hand-tune per level, sample the sway
+ * arc on both sides and keep whichever has more room.
+ */
+function pickOrbitSide(def: LevelDef, broadside: number): number {
+  let best = broadside;
+  let bestClearance = -Infinity;
+  for (const side of [broadside, broadside + Math.PI]) {
+    let clearance = Infinity;
+    for (let ti = 0; ti <= 2; ti++) {
+      orbitTarget.lerpVectors(orbitFrom, orbitTo, (ti / 2) * 0.35);
+      for (let ai = 0; ai <= 8; ai++) {
+        const a = side + (ai / 8 - 0.5) * 1.6;
+        clearance = Math.min(
+          clearance,
+          clearanceAt(
+            def,
+            orbitTarget.x + Math.cos(a) * 23,
+            orbitTarget.y + 18.5,
+            orbitTarget.z + Math.sin(a) * 23,
+          ),
+        );
+      }
+    }
+    if (clearance > bestClearance) {
+      bestClearance = clearance;
+      best = side;
+    }
+  }
+  return best;
+}
+
+/** Distance from a point to the nearest block, negative when inside one. */
+function clearanceAt(def: LevelDef, x: number, y: number, z: number): number {
+  let min = Infinity;
+  for (const b of def.blocks) {
+    let hx: number;
+    let hy: number;
+    let hz: number;
+    if (b.kind === 'box' || b.kind === 'ramp') {
+      hx = b.size[0] / 2;
+      hy = b.size[1] / 2;
+      hz = b.size[2] / 2;
+    } else if (b.kind === 'cylinder') {
+      hx = hz = b.radius;
+      hy = b.height / 2;
+    } else {
+      hx = hz = b.radius + b.width / 2;
+      hy = b.thickness;
+    }
+    // An axis-aligned test is enough: the question is only whether the camera
+    // would be buried, not what the exact surface distance is.
+    const d = Math.max(
+      Math.abs(x - b.pos[0]) - hx,
+      Math.abs(y - b.pos[1]) - hy,
+      Math.abs(z - b.pos[2]) - hz,
+    );
+    if (d < min) min = d;
+  }
+  return min;
 }
 
 function updateOrbit(dt: number) {
@@ -295,13 +377,22 @@ function updateOrbit(dt: number) {
   // Drift only a third of the way toward the finish: far enough to tour the
   // opening of the course, close enough that the sun's shadow frustum (which
   // stays centred on the parked marble) still covers what we are looking at.
-  const k = (0.5 - 0.5 * Math.cos(orbitT * 0.055)) * 0.35;
+  // Never aim at the spawn exactly: the scenery an author puts right behind a
+  // start pad is close enough to fill the frame as a flat slab. Starting a
+  // little way down the course puts that mass off to one side.
+  const k = 0.08 + (0.5 - 0.5 * Math.cos(orbitT * 0.055)) * 0.3;
   orbitTarget.lerpVectors(orbitFrom, orbitTo, k);
   orbitTarget.y += 1.5;
 
-  const a = orbitT * 0.075 + 2.1;
-  const r = 26 + Math.sin(orbitT * 0.11) * 4;
-  const h = 13 + Math.sin(orbitT * 0.17) * 2.5;
+  // A shallow boom put the horizon through the middle of the frame, which read
+  // as the course hanging in mid-air with a skyline pasted behind it. Around
+  // 36 degrees of elevation pushes the horizon off the top edge, so the ground
+  // and the rivers fill the frame and the course sits *in* the city. The angle
+  // sways either side of the spawn heading rather than orbiting all the way
+  // round, which keeps the course in front of the camera at all times.
+  const a = orbitBase + Math.sin(orbitT * 0.085) * 0.8;
+  const r = 23 + Math.sin(orbitT * 0.11) * 3;
+  const h = 17 + Math.sin(orbitT * 0.17) * 2;
   orbitCam.position.set(
     orbitTarget.x + Math.cos(a) * r,
     orbitTarget.y + h,
@@ -417,6 +508,10 @@ async function boot() {
   requestAnimationFrame(frame);
   await ensureBackdrop(shell.selected);
   shell.setLoading(false);
+
+  // `#levels` opens straight into course select. Comparison runs need to
+  // screenshot a specific menu without synthesising clicks first.
+  if (location.hash === '#levels') goto('levels');
 }
 
 void boot();

@@ -164,11 +164,6 @@ export function trussBridge(
 /** Degrees to radians. Level layouts read far better in degrees. */
 export const deg = (d: number) => (d * Math.PI) / 180;
 
-/** A point on a circle, for chaining arc walkways together by hand. */
-export function arcPoint(center: Vec3, radius: number, angle: number, y = center[1]): Vec3 {
-  return [center[0] + Math.cos(angle) * radius, y, center[2] + Math.sin(angle) * radius];
-}
-
 export interface ArcWalkOpts {
   thickness?: number;
   rise?: number;
@@ -235,6 +230,41 @@ export function arcWalk(
   if (opts.outerWall) wall(radius + width / 2 + 0.2, opts.outerWall, lift);
   if (opts.innerWall) wall(radius - width / 2 - 0.2, opts.innerWall, -lift);
   return out;
+}
+
+/**
+ * A flat deck tilted to run from one point to another. Euler order is XYZ, so
+ * the Z rotation is applied first and lifts the +X end; the Y rotation then
+ * aims that end at the destination. Getting this pair the wrong way round is
+ * how sloped platforms end up mirrored, so every ramp in every level goes
+ * through here.
+ */
+export function slopeDeck(
+  from: Vec3,
+  to: Vec3,
+  width: number,
+  thickness = 0.5,
+  texture: TextureName = 'concrete',
+  surface: SurfaceName = 'default',
+  extra: Partial<Block> = {},
+): Block {
+  const dx = to[0] - from[0];
+  const dz = to[2] - from[2];
+  const run = Math.hypot(dx, dz);
+  const rise = to[1] - from[1];
+  return {
+    kind: 'box',
+    pos: [
+      (from[0] + to[0]) / 2,
+      (from[1] + to[1]) / 2 - thickness / 2,
+      (from[2] + to[2]) / 2,
+    ],
+    size: [Math.hypot(run, rise), thickness, width],
+    rot: [0, Math.atan2(-dz, dx), Math.atan2(rise, run)],
+    texture,
+    surface,
+    ...extra,
+  } as Block;
 }
 
 /**

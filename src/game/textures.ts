@@ -115,6 +115,58 @@ function blotches(
   ctx.restore();
 }
 
+function roundRectPath(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+/**
+ * A cut stone centred on the origin: flat on top with a bevelled rim. For
+ * colour the rim is lit from the upper left; for height every rim falls away,
+ * which is what the normal map needs.
+ */
+function bevelStone(
+  ctx: CanvasRenderingContext2D,
+  hw: number,
+  hh: number,
+  bevel: number,
+  top: string,
+  upper: string,
+  lower: string,
+) {
+  ctx.fillStyle = top;
+  ctx.fillRect(-hw, -hh, hw * 2, hh * 2);
+  const b = bevel;
+  const quad = (pts: number[][], fill: string) => {
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.closePath();
+    ctx.fill();
+  };
+  quad([[-hw, -hh], [hw, -hh], [hw - b, -hh + b], [-hw + b, -hh + b]], upper);
+  quad([[-hw, -hh], [-hw + b, -hh + b], [-hw + b, hh - b], [-hw, hh]], upper);
+  quad([[-hw, hh], [-hw + b, hh - b], [hw - b, hh - b], [hw, hh]], lower);
+  quad([[hw, -hh], [hw, hh], [hw - b, hh - b], [hw - b, -hh + b]], lower);
+}
+
 /** A lit dome over a shape: bright toward the key light, dark at the rim. */
 function domeFill(
   ctx: CanvasRenderingContext2D,
@@ -176,43 +228,62 @@ function drawSurface(name: TextureName, size: number, mode: Mode): HTMLCanvasEle
     }
 
     case 'cobblestone': {
-      // Six stones across the tile: at the density set in builder.ts that puts
-      // a cobble at roughly three quarters of the marble's width, which is the
-      // size that stops the street from moiring into grey mush at distance.
-      const n = 6;
+      // Nine setts across the tile, not six. Measured off the rendered frame:
+      // six put a sett at 73px against a 108px marble near the camera and
+      // larger than the marble at the bottom of the screen, which read as a
+      // floor of eggs. Nine puts it at 0.22 units — just over half the
+      // marble's width — and lands the tile at 256px per world unit, which is
+      // 1:1 with screen pixels at the marble's depth.
+      const n = 9;
       const cell = size / n;
-      ctx.fillStyle = C('#4a4034', '#2b2b2b');
+      ctx.fillStyle = C('#221d18', '#1e1e1e');
       ctx.fillRect(0, 0, size, size);
-      if (mode === 'albedo') blotches(ctx, size, 30, '#241d15', cell * 0.7, 0.35, rng);
       for (let y = 0; y < n; y++) {
         for (let x = 0; x < n; x++) {
-          const cx = x * cell + cell / 2 + (rng() - 0.5) * cell * 0.18;
-          const cy = y * cell + cell / 2 + (rng() - 0.5) * cell * 0.18;
-          const rx = cell * (0.42 + rng() * 0.05);
-          const ry = cell * (0.4 + rng() * 0.05);
-          const rot = rng() * Math.PI;
-          // Warm setts with cool ones mixed in, the way a real street is laid.
-          const cool = rng() < 0.35;
-          const base = cool
-            ? vary('#8d94a0', (rng() - 0.5) * 0.04, 0.6 + rng() * 0.6, 0.85 + rng() * 0.35)
-            : vary('#b8a17c', (rng() - 0.5) * 0.05, 0.7 + rng() * 0.6, 0.85 + rng() * 0.35);
-          wrapped(size, cx, cy, rx + 4 * S, (px, py) => {
+          const cx = x * cell + cell / 2 + (rng() - 0.5) * cell * 0.1;
+          const cy = y * cell + cell / 2 + (rng() - 0.5) * cell * 0.1;
+          // Setts are laid tight: the joint is a dark line, not a moat.
+          const hw = cell * (0.46 + rng() * 0.02);
+          const hh = cell * (0.45 + rng() * 0.02);
+          const round = cell * 0.16;
+          const rot = (rng() - 0.5) * 0.14;
+          // Pittsburgh setts are dark grey granite with warm brown ones mixed
+          // through. Anything lighter than this drifts to pastel under a key
+          // light that already puts lit faces near clipping.
+          const warm = rng() < 0.4;
+          const base = warm
+            ? vary('#735839', (rng() - 0.5) * 0.03, 0.7 + rng() * 0.5, 0.82 + rng() * 0.3)
+            : vary('#66686b', (rng() - 0.5) * 0.05, 0.5 + rng() * 0.8, 0.82 + rng() * 0.32);
+          // Drawn from a pre-rolled list so the colour and height passes stay
+          // in step: wrapped() may run its body up to four times, and pulling
+          // from the RNG inside it would desync the two.
+          const spots = Array.from({ length: 22 }, () => [rng(), rng(), rng()]);
+          wrapped(size, cx, cy, Math.max(hw, hh) + 2 * S, (px, py) => {
             ctx.save();
             ctx.translate(px, py);
             ctx.rotate(rot);
-            ctx.scale(1, ry / rx);
-            ctx.fillStyle =
-              mode === 'albedo'
-                ? domeFill(ctx, 0, 0, rx, shade(base, 1.2), shade(base, 0.55))
-                : domeFill(ctx, 0, 0, rx, '#ffffff', '#6a6a6a');
-            ctx.beginPath();
-            ctx.arc(0, 0, rx, 0, Math.PI * 2);
-            ctx.fill();
+            roundRectPath(ctx, -hw, -hh, hw * 2, hh * 2, round);
+            ctx.clip();
+            // Flat on top with a quick bevel at the rim: a cut sett, not a
+            // pebble. The radial dome is what made these read as eggs.
+            if (mode === 'albedo') {
+              bevelStone(ctx, hw, hh, cell * 0.13, base, shade(base, 1.2), shade(base, 0.5));
+              // Quarry grain, so a sett reads as stone rather than plastic.
+              ctx.globalAlpha = 0.18;
+              for (const [sx, sy, tone] of spots) {
+                ctx.fillStyle = tone > 0.5 ? '#ffffff' : '#000000';
+                ctx.fillRect(-hw + sx * hw * 2, -hh + sy * hh * 2, 1.8 * S, 1.8 * S);
+              }
+              ctx.globalAlpha = 1;
+            } else {
+              bevelStone(ctx, hw, hh, cell * 0.13, '#ffffff', '#8e8e8e', '#8e8e8e');
+            }
             ctx.restore();
           });
         }
       }
-      grain(16);
+      if (mode === 'albedo') blotches(ctx, size, 20, '#171310', cell * 1.1, 0.18, rng);
+      grain(14);
       break;
     }
 
@@ -368,25 +439,42 @@ function drawSurface(name: TextureName, size: number, mode: Mode): HTMLCanvasEle
     }
 
     case 'glass': {
-      const cell = size / 4;
-      ctx.fillStyle = C('#1d3550', '#3c3c3c');
+      // Twelve panes across rather than four. These towers sit on the horizon,
+      // and four big squares read as a gameplay checkerboard; a fine grid mips
+      // down to a soft tint and stays where it belongs, in the backdrop.
+      const n = 12;
+      const cell = size / n;
+      // Dark mullions, and dark overall: the curtain wall is a silhouette
+      // first. The old near-white panes were the brightest thing in the frame.
+      ctx.fillStyle = C('#10192a', '#2a2a2a');
       ctx.fillRect(0, 0, size, size);
-      for (let y = 0; y < 4; y++) {
-        for (let x = 0; x < 4; x++) {
-          const px = x * cell + 3 * S;
-          const py = y * cell + 3 * S;
-          const w = cell - 6 * S;
-          const g2 = ctx.createLinearGradient(px, py, px + w, py + w);
-          // Panes catch the sky at different angles; that variance is the only
-          // thing that makes a curtain wall read as glass.
-          const lit = 0.55 + rng() * 0.85;
-          g2.addColorStop(0, C(shade('#8fd0f5', lit * 1.15), '#ffffff'));
-          g2.addColorStop(0.6, C(shade('#3d86bd', lit), '#e6e6e6'));
-          g2.addColorStop(1, C(shade('#1c4f7a', lit), '#d2d2d2'));
+      for (let y = 0; y < n; y++) {
+        for (let x = 0; x < n; x++) {
+          const px = x * cell + 1.5 * S;
+          const py = y * cell + 1.5 * S;
+          const w = cell - 3 * S;
+          // Panes catch the sky at different angles, and a few floors are lit
+          // from inside; that variance is what makes a wall read as glass.
+          const lit = rng();
+          const warm = rng() < 0.06;
+          const g2 = ctx.createLinearGradient(px, py, px, py + w);
+          if (warm) {
+            g2.addColorStop(0, C('#a98a4e', '#d8d8d8'));
+            g2.addColorStop(1, C('#6a5326', '#c0c0c0'));
+          } else {
+            const v = 0.4 + lit * 0.75;
+            g2.addColorStop(0, C(shade('#4b7ba4', v * 1.2), '#e8e8e8'));
+            g2.addColorStop(1, C(shade('#20415f', v), '#c8c8c8'));
+          }
           ctx.fillStyle = g2;
           ctx.fillRect(px, py, w, w);
         }
       }
+      // A spandrel band every few floors, so the tower has horizontal
+      // structure instead of one undifferentiated grid.
+      ctx.fillStyle = C('#0d1420', '#404040');
+      for (let y = 0; y < n; y += 4) ctx.fillRect(0, y * cell, size, cell * 0.3);
+      grain(10);
       break;
     }
 

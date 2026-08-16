@@ -99,6 +99,9 @@ export class Level {
   heldPowerup: PowerupType | null = null;
   active: ActivePowerup[] = [];
 
+  /** Fired when a held powerup is actually spent, so the HUD can react. */
+  onPowerupUsed: ((type: PowerupType) => void) | null = null;
+
   private gems: Gem[] = [];
   private powerups: Powerup[] = [];
   private timeTravels: TimeTravel[] = [];
@@ -150,6 +153,9 @@ export class Level {
     // clips instead, which is what keeps its greens green and its golds gold.
     renderer.toneMapping = THREE.LinearToneMapping;
     renderer.toneMappingExposure = 1.0;
+    // PCFSoftShadowMap is deprecated in this Three and silently falls back to
+    // this anyway; asking for it directly keeps the console clean.
+    renderer.shadowMap.type = THREE.PCFShadowMap;
 
     const skyTop = punch(sky.top, 1.45, 0.98);
     const skyBottom = punch(sky.bottom, 1.6, 1.0);
@@ -159,7 +165,10 @@ export class Level {
     const sunColor = punch(sky.sunColor, 1.8, 1.0);
     const sunDir = v3(sky.sunDir).normalize();
 
-    this.scene.fog = new THREE.Fog(fogColor, sky.fogNear, sky.fogFar);
+    // Pulled in from the level's own numbers. The downtown skyline sits only
+    // 60-160 units out, which under the authored fog left it fully saturated
+    // and reading as gameplay geometry rather than as horizon.
+    this.scene.fog = new THREE.Fog(fogColor, sky.fogNear * 0.8, sky.fogFar * 0.6);
     this.scene.background = skyBottom;
 
     // Sky dome: a large inverted sphere with a vertical gradient. Cheaper and
@@ -755,6 +764,7 @@ export class Level {
     this.effects.powerupBurst(this.marble.position, type);
     this.audio?.powerup(type);
     this.applyModifiers();
+    this.onPowerupUsed?.(type);
   }
 
   private setActive(type: PowerupType, duration: number) {
