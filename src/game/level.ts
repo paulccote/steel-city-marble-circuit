@@ -1,7 +1,13 @@
 import * as THREE from 'three';
 import type { LevelDef, MoverEntity, PowerupType, Vec3 } from './types';
 import { buildBlocks } from './builder';
-import { getTexture, makeEnvMap } from './textures';
+import {
+  getGlowTexture,
+  getTexture,
+  makeEnvMap,
+  makeMarbleTexture,
+  makePadTexture,
+} from './textures';
 import { CollisionMesh, CollisionWorld, type MovingCollider } from '../engine/collision';
 import {
   GO_TIME,
@@ -115,6 +121,8 @@ export class Level {
   private killY: number;
   private prevJump = false;
   private prevUse = false;
+  /** Which countdown second we last played, counting down to GO. */
+  private lastBeat = 99;
 
   constructor(def: LevelDef, renderer: THREE.WebGLRenderer, aspect: number, audio: Audio | null) {
     this.def = def;
@@ -136,57 +144,99 @@ export class Level {
 
   private buildEnvironment(renderer: THREE.WebGLRenderer) {
     const sky = this.def.sky;
-    this.scene.fog = new THREE.Fog(sky.fog, sky.fogNear, sky.fogFar);
-    this.scene.background = new THREE.Color(sky.bottom);
+
+    // ACES rolls every saturated colour back toward grey — it is a film look,
+    // and it is most of the reason this scene read as sludge. Marble Blast
+    // clips instead, which is what keeps its greens green and its golds gold.
+    renderer.toneMapping = THREE.LinearToneMapping;
+    renderer.toneMappingExposure = 1.0;
+
+    const skyTop = punch(sky.top, 1.45, 0.98);
+    const skyBottom = punch(sky.bottom, 1.6, 1.0);
+    const horizon = punch(sky.bottom, 1.2, 1.08);
+    const fogColor = punch(sky.fog, 1.25, 1.0);
+    const bounce = punch(sky.ambient, 1.7, 1.15);
+    const sunColor = punch(sky.sunColor, 1.8, 1.0);
+    const sunDir = v3(sky.sunDir).normalize();
+
+    this.scene.fog = new THREE.Fog(fogColor, sky.fogNear, sky.fogFar);
+    this.scene.background = skyBottom;
 
     // Sky dome: a large inverted sphere with a vertical gradient. Cheaper and
     // more controllable than a cubemap, and it lets each level set its own
-    // time of day.
+    // time of day. The sun disc is drawn into it so the key light has a
+    // visible source to point back at.
     const domeGeo = new THREE.SphereGeometry(600, 32, 16);
     const domeMat = new THREE.ShaderMaterial({
       side: THREE.BackSide,
       depthWrite: false,
       fog: false,
       uniforms: {
-        top: { value: new THREE.Color(sky.top) },
-        bottom: { value: new THREE.Color(sky.bottom) },
+        top: { value: skyTop },
+        bottom: { value: skyBottom },
+        horizon: { value: horizon },
+        sunDir: { value: sunDir.clone() },
+        sunColor: { value: sunColor },
       },
       vertexShader: `
-        varying float vH;
+        varying vec3 vDir;
         void main() {
           vec4 wp = modelMatrix * vec4(position, 1.0);
-          vH = normalize(wp.xyz).y;
+          vDir = normalize(wp.xyz);
           gl_Position = projectionMatrix * viewMatrix * wp;
         }`,
       fragmentShader: `
-        uniform vec3 top; uniform vec3 bottom; varying float vH;
+        uniform vec3 top; uniform vec3 bottom; uniform vec3 horizon;
+        uniform vec3 sunDir; uniform vec3 sunColor;
+        varying vec3 vDir;
         void main() {
-          float t = clamp(vH * 0.5 + 0.5, 0.0, 1.0);
-          gl_FragColor = vec4(mix(bottom, top, pow(t, 0.8)), 1.0);
+          float t = clamp(vDir.y * 0.5 + 0.5, 0.0, 1.0);
+          vec3 col = mix(bottom, top, pow(t, 0.65));
+          col = mix(col, horizon, pow(1.0 - abs(vDir.y), 10.0));
+          float s = max(dot(vDir, sunDir), 0.0);
+          col += sunColor * (pow(s, 900.0) * 2.0 + pow(s, 14.0) * 0.22);
+          gl_FragColor = vec4(col, 1.0);
+          // Uniforms arrive linear; without these the dome would be written
+          // straight to an sRGB buffer and the sky would come out muddy.
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
         }`,
     });
     const dome = new THREE.Mesh(domeGeo, domeMat);
     dome.renderOrder = -1;
     this.scene.add(dome);
 
-    const sun = new THREE.DirectionalLight(sky.sunColor, 2.1);
-    sun.position.copy(v3(sky.sunDir).normalize().multiplyScalar(80));
+    // A hard key light with a cool, weak fill. The reference's readability is
+    // almost entirely this ratio: lit faces near white, shadowed faces clearly
+    // darker and tinted toward the sky rather than toward black.
+    const sun = new THREE.DirectionalLight(sunColor, 3.0);
+    sun.position.copy(sunDir).multiplyScalar(80);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
-    const s = 60;
+    // A tight frustum around the marble: 40 units of coverage at 2048 gives
+    // ~4cm shadow texels, which is what stops shadows from turning into the
+    // blocky smear they were.
+    const s = 38;
     sun.shadow.camera.left = -s;
     sun.shadow.camera.right = s;
     sun.shadow.camera.top = s;
     sun.shadow.camera.bottom = -s;
-    sun.shadow.camera.far = 260;
-    sun.shadow.bias = -0.0008;
-    sun.shadow.normalBias = 0.02;
+    sun.shadow.camera.near = 20;
+    sun.shadow.camera.far = 175;
+    sun.shadow.bias = -0.0004;
+    sun.shadow.normalBias = 0.035;
     this.scene.add(sun);
     this.scene.add(sun.target);
     this.sun = sun;
 
-    this.scene.add(new THREE.HemisphereLight(sky.top, sky.ambient, 1.0));
-    this.scene.environment = makeEnvMap(renderer, sky.top, sky.ambient);
+    this.scene.add(new THREE.HemisphereLight(skyTop, bounce, 0.7));
+    this.scene.environment = makeEnvMap(renderer, {
+      top: hex(skyTop),
+      horizon: hex(horizon),
+      ground: hex(bounce),
+      sun: hex(sunColor),
+      sunHeight: sunDir.y,
+    });
   }
 
   private sun!: THREE.DirectionalLight;
@@ -200,16 +250,38 @@ export class Level {
 
   private buildMarble(renderer: THREE.WebGLRenderer) {
     void renderer;
-    const geo = new THREE.SphereGeometry(MARBLE.radius, 32, 24);
-    const mat = new THREE.MeshStandardMaterial({
-      color: 0xd8e4ee,
-      roughness: 0.12,
-      metalness: 0.85,
-      envMapIntensity: 1.4,
+    // The marble is on screen every frame of the game, so it is the one object
+    // worth spending a physical material on: a swirled glass body under a
+    // clearcoat, which gives it both a coloured interior and the hard white
+    // highlight that reads as "polished" against any background.
+    const geo = new THREE.SphereGeometry(MARBLE.radius, 48, 32);
+    const mat = new THREE.MeshPhysicalMaterial({
+      map: makeMarbleTexture(),
+      color: 0xffffff,
+      roughness: 0.07,
+      metalness: 0.1,
+      clearcoat: 1,
+      clearcoatRoughness: 0.02,
+      envMapIntensity: 2.6,
+      emissive: 0x1b4c78,
+      emissiveIntensity: 0.22,
     });
     this.marbleMesh = new THREE.Mesh(geo, mat);
     this.marbleMesh.castShadow = true;
     this.scene.add(this.marbleMesh);
+
+    // A tight rim shell. Marble Blast's marble has a dark, definite edge; a
+    // lit sphere alone dissolves into whatever is behind it.
+    const rim = new THREE.Mesh(
+      geo,
+      new THREE.MeshBasicMaterial({
+        color: 0x0b2036,
+        side: THREE.BackSide,
+        fog: false,
+      }),
+    );
+    rim.scale.setScalar(1.045);
+    this.marbleMesh.add(rim);
   }
 
   private buildEntities() {
@@ -405,6 +477,9 @@ export class Level {
       this.elapsed = 0;
       this.gemsCollected = 0;
       this.checkpoint = null;
+      this.lastBeat = 99;
+      // The gem chime climbs as you collect; a fresh run has to start low again.
+      this.audio?.resetGemPitch();
       for (const g of this.gems) {
         g.collected = false;
         g.mesh.visible = true;
@@ -436,9 +511,15 @@ export class Level {
     dt = Math.min(dt, 0.1);
     this.elapsed += dt * 1000;
 
-    if (this.phase === 'countdown' && this.elapsed >= GO_TIME) {
-      this.phase = 'playing';
-      this.audio?.play('go');
+    if (this.phase === 'countdown') {
+      // Beep on each of the last three seconds, then GO. Tracked by index so a
+      // slow frame that steps past a boundary still fires it exactly once.
+      const beat = Math.max(0, Math.ceil((GO_TIME - this.elapsed) / 1000));
+      if (beat < this.lastBeat) {
+        this.lastBeat = beat;
+        if (beat <= 3) this.audio?.countdown(beat);
+      }
+      if (this.elapsed >= GO_TIME) this.phase = 'playing';
     }
 
     // Look is applied per frame, not per physics tick, so aiming stays smooth
@@ -519,8 +600,16 @@ export class Level {
     );
 
     if (this.marble.impactSpeed > 1) {
-      this.audio?.impact(this.marble.impactSpeed);
-      if (this.marble.impactSpeed > 6) this.effects.burst(this.marble.position, this.marble.groundNormal);
+      const kind = this.marble.lastContactMaterial.kind;
+      this.audio?.impact(this.marble.impactSpeed, kind);
+      // Both of these self-gate at the same 2.5 m/s the audio ramps from, so
+      // the particles and the sound always agree about what counted as a hit.
+      this.effects.impact(
+        this.marble.position,
+        this.marble.groundNormal,
+        this.marble.impactSpeed,
+        kind,
+      );
     }
     void before;
   }
@@ -594,8 +683,8 @@ export class Level {
         g.collected = true;
         g.mesh.visible = false;
         this.gemsCollected++;
-        this.effects.sparkle(g.pos, 0xff4fd8);
-        this.audio?.play(this.gemsCollected >= this.gemsTotal ? 'gemAll' : 'gem');
+        this.effects.gemPop(g.pos, 0xff4fd8);
+        this.audio?.gem(this.gemsCollected, this.gemsTotal);
       }
     }
 
@@ -617,7 +706,7 @@ export class Level {
         tt.cooldownUntil = Infinity;
         tt.mesh.visible = false;
         this.clock = Math.max(0, this.clock - tt.ms);
-        this.effects.sparkle(tt.pos, 0x66ddff);
+        this.effects.timeTravel(tt.pos);
         this.audio?.play('timeTravel');
       }
     }
@@ -663,8 +752,8 @@ export class Level {
         this.marble.velocity.addScaledVector(this.up, POWERUPS.megaMarble.kick);
         break;
     }
-    this.effects.sparkle(this.marble.position, 0xffe066);
-    this.audio?.play('powerup');
+    this.effects.powerupBurst(this.marble.position, type);
+    this.audio?.powerup(type);
     this.applyModifiers();
   }
 
@@ -732,7 +821,7 @@ export class Level {
             this.marble.velocity.addScaledVector(dir, h.strength - along);
             h.cooldownUntil = this.elapsed + 200;
             this.audio?.play('bumper');
-            this.effects.sparkle(h.pos, 0xffaa33);
+            this.effects.bumper(h.pos);
             h.mesh.scale.set(1.25, 0.7, 1.25);
           }
           h.mesh.scale.lerp(new THREE.Vector3(1, 1, 1), 1 - Math.exp(-10 * dt));
@@ -826,7 +915,7 @@ export class Level {
     this.phase = 'finished';
     this.finishTime = this.clock;
     this.audio?.play('finish');
-    this.effects.sparkle(this.marble.position, 0x66ff99);
+    this.effects.finishBurst(this.marble.position);
   }
 
   private die() {
@@ -863,176 +952,426 @@ export class Level {
 
 // ------------------------------------------------------------- entity meshes
 
+/** Push a colour toward the reference's palette: it is bold, never muted. */
+function punch(hexColor: string, sat: number, light: number): THREE.Color {
+  const c = new THREE.Color(hexColor);
+  const hsl = { h: 0, s: 0, l: 0 };
+  c.getHSL(hsl);
+  return c.setHSL(hsl.h, Math.min(1, hsl.s * sat), Math.min(1, hsl.l * light));
+}
+
+const hex = (c: THREE.Color) => `#${c.getHexString()}`;
+
+/**
+ * A soft additive billboard. Every pickup carries one: it is what makes a
+ * 30cm object findable from the far side of a level, which is the job the
+ * reference's gems do and ours did not.
+ */
+function makeHalo(color: number, size: number, opacity: number): THREE.Sprite {
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: getGlowTexture(),
+      color,
+      transparent: true,
+      opacity,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      fog: false,
+    }),
+  );
+  sprite.scale.setScalar(size);
+  return sprite;
+}
+
+/**
+ * An eight-sided brilliant: crown, girdle, pavilion. Flat shaded, so every
+ * facet takes the light separately and the gem flashes as it spins — a smooth
+ * octahedron just sits there being a pink blob.
+ */
+function gemGeometry(r: number, h: number): THREE.BufferGeometry {
+  const sides = 8;
+  const pos: number[] = [];
+  const push = (...ps: THREE.Vector3[]) => ps.forEach((p) => pos.push(p.x, p.y, p.z));
+  const ring = (radius: number, y: number) =>
+    Array.from({ length: sides }, (_, i) => {
+      const a = (i / sides) * Math.PI * 2;
+      return new THREE.Vector3(Math.cos(a) * radius, y, Math.sin(a) * radius);
+    });
+
+  const table = ring(r * 0.42, h * 0.5);
+  const crown = ring(r, h * 0.16);
+  const girdle = ring(r, h * 0.06);
+  const tip = new THREE.Vector3(0, -h * 0.55, 0);
+  const centre = new THREE.Vector3(0, h * 0.5, 0);
+
+  // Wound so the outward face is the front face: rings run clockwise seen from
+  // above, so every triangle is listed against that.
+  for (let i = 0; i < sides; i++) {
+    const j = (i + 1) % sides;
+    push(table[j], table[i], centre);
+    push(crown[j], crown[i], table[i]);
+    push(table[j], crown[j], table[i]);
+    push(girdle[j], girdle[i], crown[i]);
+    push(crown[j], girdle[j], crown[i]);
+    push(girdle[j], tip, girdle[i]);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// Shared across every gem in the level: one geometry, one material, one halo
+// texture. A level can hold twenty of these and they cost one draw call each.
+let gemGeo: THREE.BufferGeometry | null = null;
+let gemMat: THREE.Material | null = null;
+
 function makeGem(): THREE.Mesh {
-  const geo = new THREE.OctahedronGeometry(0.3, 0);
-  geo.scale(1, 1.35, 1);
-  const mat = new THREE.MeshStandardMaterial({
-    color: 0xff3fc8,
-    emissive: 0x8a1f6a,
-    emissiveIntensity: 0.75,
-    roughness: 0.15,
-    metalness: 0.4,
+  gemGeo ??= gemGeometry(0.26, 0.62);
+  gemMat ??= new THREE.MeshStandardMaterial({
+    color: 0xff40d4,
+    emissive: 0xff1fb0,
+    emissiveIntensity: 0.9,
+    roughness: 0.05,
+    metalness: 0.55,
+    envMapIntensity: 3.0,
     flatShading: true,
   });
-  const mesh = new THREE.Mesh(geo, mat);
+  const mesh = new THREE.Mesh(gemGeo, gemMat);
   mesh.castShadow = true;
+  mesh.add(makeHalo(0xff7ae0, 0.9, 0.55));
   return mesh;
 }
 
 function makePad(color: number): THREE.Object3D {
   const group = new THREE.Group();
-  // Pads sit flush with the floor they are placed on: the entity position is
-  // the floor height, so the marble rests on the ground, not inside the pad.
-  const base = new THREE.Mesh(
-    new THREE.CylinderGeometry(1.15, 1.15, 0.1, 28),
-    new THREE.MeshStandardMaterial({ color: 0x2a2f36, roughness: 0.7, metalness: 0.3 }),
+  const tint = new THREE.Color(color);
+  const map = makePadTexture(
+    color.toString(16),
+    hex(tint),
+    hex(tint.clone().lerp(new THREE.Color(0xffffff), 0.6)),
   );
-  base.position.y = -0.05;
-  base.receiveShadow = true;
-  group.add(base);
-  const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(0.95, 0.07, 10, 32),
-    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.9, roughness: 0.3 }),
+
+  // The pad is a decal, not a solid: the entity position is the floor height,
+  // so anything with thickness either z-fights the floor it sits on or the
+  // marble sinks into it. A flat disc plus a polygon offset wins the depth
+  // test outright, which is the fix rather than a cover-up.
+  const face = new THREE.Mesh(
+    new THREE.CircleGeometry(1.15, 48),
+    new THREE.MeshStandardMaterial({
+      map,
+      emissiveMap: map,
+      emissive: tint,
+      emissiveIntensity: 0.85,
+      roughness: 0.35,
+      metalness: 0.2,
+      envMapIntensity: 1.2,
+      polygonOffset: true,
+      polygonOffsetFactor: -4,
+      polygonOffsetUnits: -8,
+    }),
   );
-  ring.rotation.x = Math.PI / 2;
-  ring.position.y = 0.005;
-  group.add(ring);
+  face.rotation.x = -Math.PI / 2;
+  face.position.y = 0.002;
+  group.add(face);
+
+  const glow = makeHalo(color, 2.4, 0.35);
+  glow.position.y = 0.35;
+  group.add(glow);
   return group;
 }
 
 const POWERUP_COLORS: Record<PowerupType, number> = {
-  superSpeed: 0xff5a2b,
-  superJump: 0x39c7ff,
-  superBounce: 0xc65cff,
-  shockAbsorber: 0x9aa4ad,
-  gyrocopter: 0x4de08a,
-  megaMarble: 0xffd23f,
+  superSpeed: 0xff4a12,
+  superJump: 0x18c0ff,
+  superBounce: 0xc23bff,
+  shockAbsorber: 0xb9c6d2,
+  gyrocopter: 0x2ee87a,
+  megaMarble: 0xffc400,
 };
 
+/** Glossy, self-lit plastic: the finish every pickup in the reference has. */
+function pickupMaterial(color: number, emissive = 0.7): THREE.Material {
+  return new THREE.MeshStandardMaterial({
+    color,
+    emissive: color,
+    emissiveIntensity: emissive,
+    roughness: 0.15,
+    metalness: 0.35,
+    envMapIntensity: 2.0,
+  });
+}
+
+/**
+ * Powerups are told apart by shape first and colour second, the way the
+ * reference does it — a ring of identical glowing balls in six tints is
+ * unreadable at speed.
+ */
 function makePowerup(type: PowerupType): THREE.Object3D {
   const group = new THREE.Group();
   const color = POWERUP_COLORS[type];
-  const shell = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(0.34, 1),
-    new THREE.MeshStandardMaterial({
-      color,
-      emissive: color,
-      emissiveIntensity: 0.55,
-      roughness: 0.25,
-      metalness: 0.5,
-    }),
-  );
-  shell.castShadow = true;
-  group.add(shell);
-  const halo = new THREE.Mesh(
-    new THREE.TorusGeometry(0.5, 0.035, 8, 24),
-    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.55 }),
-  );
-  halo.rotation.x = Math.PI / 2;
-  group.add(halo);
+  const mat = pickupMaterial(color);
+  const add = (geo: THREE.BufferGeometry, y = 0, rx = 0, rz = 0) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.y = y;
+    m.rotation.set(rx, 0, rz);
+    m.castShadow = true;
+    group.add(m);
+    return m;
+  };
+
+  switch (type) {
+    case 'superSpeed': {
+      // A tapering stack of cones: a flame, so speed reads before colour does.
+      for (let i = 0; i < 3; i++) {
+        add(new THREE.ConeGeometry(0.3 - i * 0.07, 0.22, 6), -0.16 + i * 0.14);
+      }
+      break;
+    }
+    case 'superJump': {
+      // A coil, standing up.
+      for (let i = 0; i < 4; i++) {
+        add(new THREE.TorusGeometry(0.22 - i * 0.015, 0.05, 8, 16), -0.18 + i * 0.11, Math.PI / 2);
+      }
+      break;
+    }
+    case 'superBounce': {
+      add(new THREE.SphereGeometry(0.26, 20, 14));
+      add(new THREE.TorusGeometry(0.36, 0.035, 8, 24), 0, Math.PI / 2);
+      add(new THREE.TorusGeometry(0.36, 0.035, 8, 24), 0, 0, Math.PI / 2);
+      break;
+    }
+    case 'shockAbsorber': {
+      add(new THREE.CylinderGeometry(0.3, 0.3, 0.18, 20), -0.16);
+      add(new THREE.CylinderGeometry(0.09, 0.09, 0.42, 12), 0.14);
+      add(new THREE.CylinderGeometry(0.2, 0.2, 0.08, 20), 0.34);
+      break;
+    }
+    case 'gyrocopter': {
+      add(new THREE.SphereGeometry(0.22, 18, 12, 0, Math.PI * 2, 0, Math.PI / 2), -0.05);
+      add(new THREE.CylinderGeometry(0.03, 0.03, 0.26, 8), 0.16);
+      add(new THREE.BoxGeometry(0.92, 0.025, 0.09), 0.3);
+      add(new THREE.BoxGeometry(0.09, 0.025, 0.92), 0.3);
+      break;
+    }
+    case 'megaMarble': {
+      add(new THREE.SphereGeometry(0.34, 22, 16));
+      add(new THREE.TorusGeometry(0.4, 0.045, 8, 26), 0, Math.PI / 2);
+      break;
+    }
+  }
+
+  group.add(makeHalo(color, 1.1, 0.45));
   return group;
 }
 
 function makeTimeTravel(): THREE.Object3D {
   const group = new THREE.Group();
-  const body = new THREE.Mesh(
-    new THREE.TorusGeometry(0.3, 0.09, 10, 24),
+  const mat = pickupMaterial(0x2ff0a0, 0.85);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.07, 10, 26), mat);
+  rim.castShadow = true;
+  group.add(rim);
+  // A clock face, so it reads as time rather than as another ring pickup.
+  const face = new THREE.Mesh(
+    new THREE.CircleGeometry(0.24, 26),
     new THREE.MeshStandardMaterial({
-      color: 0x66ddff,
-      emissive: 0x1f7f9c,
-      emissiveIntensity: 0.8,
+      color: 0xf2fff8,
+      emissive: 0x7affd0,
+      emissiveIntensity: 0.5,
       roughness: 0.2,
-      metalness: 0.6,
+      side: THREE.DoubleSide,
     }),
   );
-  body.castShadow = true;
-  group.add(body);
+  face.position.z = 0.01;
+  group.add(face);
+  const handMat = new THREE.MeshStandardMaterial({ color: 0x0b2a1e, roughness: 0.5 });
+  const hour = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.13, 0.01), handMat);
+  hour.position.set(0, 0.06, 0.02);
+  group.add(hour);
+  const minute = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.03, 0.01), handMat);
+  minute.position.set(0.08, 0, 0.02);
+  group.add(minute);
+  group.add(makeHalo(0x2ff0a0, 1.0, 0.45));
   return group;
 }
 
 function makeBumper(): THREE.Object3D {
   const group = new THREE.Group();
   const body = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.7, 0.8, 0.5, 20),
-    new THREE.MeshStandardMaterial({ color: 0xff8a1f, emissive: 0x662f00, roughness: 0.5 }),
+    new THREE.CylinderGeometry(0.78, 0.86, 0.3, 24),
+    new THREE.MeshStandardMaterial({ color: 0x1b1d21, roughness: 0.6, metalness: 0.3 }),
   );
+  body.position.y = -0.1;
   body.castShadow = true;
   group.add(body);
-  const top = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.55, 0.7, 0.14, 20),
-    new THREE.MeshStandardMaterial({ color: 0xffd07a, emissive: 0x7a5a10, roughness: 0.4 }),
+  // A hot cap over a dark skirt: the same read as a pinball bumper, which is
+  // what tells the player this thing will hit back.
+  const cap = new THREE.Mesh(
+    new THREE.SphereGeometry(0.62, 24, 12, 0, Math.PI * 2, 0, Math.PI * 0.42),
+    new THREE.MeshStandardMaterial({
+      color: 0xff7a00,
+      emissive: 0xff5a00,
+      emissiveIntensity: 0.7,
+      roughness: 0.2,
+      metalness: 0.2,
+      envMapIntensity: 1.8,
+    }),
   );
-  top.position.y = 0.3;
-  group.add(top);
+  cap.position.y = 0.02;
+  cap.castShadow = true;
+  group.add(cap);
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(0.66, 0.055, 8, 28),
+    new THREE.MeshStandardMaterial({
+      color: 0xffe27a,
+      emissive: 0xffc247,
+      emissiveIntensity: 0.9,
+      roughness: 0.25,
+    }),
+  );
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.06;
+  group.add(ring);
   return group;
 }
 
 function makeMine(): THREE.Object3D {
   const group = new THREE.Group();
   const body = new THREE.Mesh(
-    new THREE.SphereGeometry(0.3, 16, 12),
-    new THREE.MeshStandardMaterial({ color: 0x23262a, roughness: 0.6, metalness: 0.5 }),
+    new THREE.SphereGeometry(0.3, 18, 14),
+    new THREE.MeshStandardMaterial({
+      color: 0x15171a,
+      roughness: 0.35,
+      metalness: 0.7,
+      envMapIntensity: 1.6,
+    }),
   );
   body.castShadow = true;
   group.add(body);
-  const spikeMat = new THREE.MeshStandardMaterial({ color: 0xd23b2b, roughness: 0.5 });
+  // A hot band around the middle: a black sphere in a shadow is invisible,
+  // and a mine you cannot see is not a hazard, it is a bug.
+  const band = new THREE.Mesh(
+    new THREE.TorusGeometry(0.29, 0.05, 8, 26),
+    new THREE.MeshStandardMaterial({
+      color: 0xff2a18,
+      emissive: 0xff2a18,
+      emissiveIntensity: 1.2,
+      roughness: 0.3,
+    }),
+  );
+  band.rotation.x = Math.PI / 2;
+  group.add(band);
+  const spikeMat = new THREE.MeshStandardMaterial({
+    color: 0xe8523a,
+    emissive: 0x6b1408,
+    emissiveIntensity: 0.6,
+    roughness: 0.4,
+    metalness: 0.4,
+  });
   for (const dir of [
     [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
   ]) {
-    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.18, 8), spikeMat);
-    spike.position.set(dir[0] * 0.33, dir[1] * 0.33, dir[2] * 0.33);
+    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.2, 8), spikeMat);
+    spike.position.set(dir[0] * 0.34, dir[1] * 0.34, dir[2] * 0.34);
     spike.lookAt(new THREE.Vector3(dir[0] * 2, dir[1] * 2, dir[2] * 2));
     spike.rotateX(Math.PI / 2);
     group.add(spike);
   }
+  group.add(makeHalo(0xff5533, 0.95, 0.3));
   return group;
 }
 
 function makeFan(): THREE.Object3D {
   const group = new THREE.Group();
   const housing = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.7, 0.7, 0.3, 20, 1, true),
+    new THREE.CylinderGeometry(0.72, 0.72, 0.36, 24, 1, true),
     new THREE.MeshStandardMaterial({
-      color: 0x8b9096,
-      roughness: 0.6,
-      metalness: 0.5,
+      color: 0x9aa6b2,
+      roughness: 0.3,
+      metalness: 0.8,
+      envMapIntensity: 1.6,
       side: THREE.DoubleSide,
     }),
   );
   group.add(housing);
-  const blades = new THREE.Mesh(
-    new THREE.BoxGeometry(1.2, 0.04, 0.22),
-    new THREE.MeshStandardMaterial({ color: 0x4d5257, roughness: 0.5, metalness: 0.6 }),
+  const lip = new THREE.Mesh(
+    new THREE.TorusGeometry(0.72, 0.05, 8, 28),
+    new THREE.MeshStandardMaterial({ color: 0xffc400, roughness: 0.3, metalness: 0.4 }),
   );
-  group.add(blades);
-  const blades2 = blades.clone();
-  blades2.rotation.y = Math.PI / 2;
-  group.add(blades2);
+  lip.rotation.x = Math.PI / 2;
+  lip.position.y = 0.18;
+  group.add(lip);
+  // Cyan blades against a warm lip: the updraught reads before you feel it.
+  const bladeMat = new THREE.MeshStandardMaterial({
+    color: 0x2fd8ff,
+    emissive: 0x0f7fa0,
+    emissiveIntensity: 0.6,
+    roughness: 0.2,
+    metalness: 0.5,
+  });
+  for (let i = 0; i < 4; i++) {
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.03, 0.2), bladeMat);
+    blade.position.set(Math.cos((i / 4) * Math.PI * 2) * 0.32, 0.06, Math.sin((i / 4) * Math.PI * 2) * 0.32);
+    blade.rotation.y = -(i / 4) * Math.PI * 2;
+    blade.rotation.z = 0.35;
+    group.add(blade);
+  }
   return group;
 }
 
 function makeOilDrum(): THREE.Object3D {
+  const group = new THREE.Group();
   const drum = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.42, 0.42, 1.1, 16),
-    new THREE.MeshStandardMaterial({ map: getTexture('rust'), roughness: 0.85, metalness: 0.3 }),
+    new THREE.CylinderGeometry(0.42, 0.42, 1.1, 20),
+    new THREE.MeshStandardMaterial({
+      map: getTexture('rust'),
+      roughness: 0.72,
+      metalness: 0.35,
+      envMapIntensity: 1.2,
+    }),
   );
   drum.castShadow = drum.receiveShadow = true;
-  return drum;
+  group.add(drum);
+  // Rolling hoops, which is what makes a cylinder read as a drum.
+  const hoopMat = new THREE.MeshStandardMaterial({ color: 0x54301c, roughness: 0.6, metalness: 0.4 });
+  for (const y of [-0.28, 0.28]) {
+    const hoop = new THREE.Mesh(new THREE.TorusGeometry(0.43, 0.035, 8, 24), hoopMat);
+    hoop.rotation.x = Math.PI / 2;
+    hoop.position.y = y;
+    group.add(hoop);
+  }
+  return group;
 }
 
 function makeCheckpoint(): THREE.Object3D {
   const group = new THREE.Group();
   const post = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.06, 0.06, 1.6, 8),
-    new THREE.MeshStandardMaterial({ color: 0xcfd6dd, roughness: 0.5, metalness: 0.6 }),
+    new THREE.CylinderGeometry(0.06, 0.06, 1.6, 10),
+    new THREE.MeshStandardMaterial({
+      color: 0xdfe8f0,
+      roughness: 0.25,
+      metalness: 0.85,
+      envMapIntensity: 1.8,
+    }),
   );
   post.position.y = 0.8;
+  post.castShadow = true;
   group.add(post);
   const flag = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.7, 0.4),
-    new THREE.MeshStandardMaterial({ color: 0xffd23f, side: THREE.DoubleSide, roughness: 0.7 }),
+    new THREE.PlaneGeometry(0.7, 0.42),
+    new THREE.MeshStandardMaterial({
+      color: 0xffd000,
+      emissive: 0xffa800,
+      emissiveIntensity: 0.55,
+      side: THREE.DoubleSide,
+      roughness: 0.5,
+    }),
   );
   flag.position.set(0.35, 1.35, 0);
   group.add(flag);
+  const glow = makeHalo(0xffd000, 1.0, 0.3);
+  glow.position.set(0.2, 1.35, 0);
+  group.add(glow);
   return group;
 }

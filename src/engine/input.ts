@@ -68,7 +68,11 @@ export class Input {
   }
 
   requestLock() {
-    if (!this.pointerLocked) this.canvas.requestPointerLock?.();
+    if (this.pointerLocked) return;
+    // Chrome rejects for about a second after a user-initiated Escape, and an
+    // unhandled rejection there would surface as a console error mid-game.
+    const result = this.canvas.requestPointerLock?.() as Promise<void> | undefined;
+    if (result && typeof result.catch === 'function') result.catch(() => undefined);
   }
 
   releaseLock() {

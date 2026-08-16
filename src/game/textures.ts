@@ -5,32 +5,88 @@ import type { TextureName } from './types';
  * Procedural textures. Everything is drawn to a canvas at load time so the
  * game ships as one bundle with no image requests — which is what keeps the
  * first level playable within a second of opening the page.
+ *
+ * Every tiling surface is drawn twice from the same seeded shape code: once
+ * for colour and once for height, which the normal map is derived from. A
+ * flat-lit box of stone reads as painted cardboard; a bumped one catches the
+ * key light and gives the scene the relief the reference has.
  */
 
 const cache = new Map<string, THREE.Texture>();
 
-function makeCanvas(size = 256) {
+const ALBEDO_SIZE = 512;
+/** Height only feeds a normal map, so half resolution is invisible and free. */
+const HEIGHT_SIZE = 256;
+
+type Mode = 'albedo' | 'height';
+type Rng = () => number;
+
+function makeCanvas(size: number) {
   const c = document.createElement('canvas');
   c.width = c.height = size;
   return { canvas: c, ctx: c.getContext('2d')! };
 }
 
-function noise(ctx: CanvasRenderingContext2D, size: number, amount: number, alpha = 0.08) {
+/** Deterministic per-texture RNG, so the colour and height passes agree. */
+function makeRng(seed: number): Rng {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function hashSeed(name: string) {
+  let h = 2166136261;
+  for (let i = 0; i < name.length; i++) h = Math.imul(h ^ name.charCodeAt(i), 16777619);
+  return h >>> 0;
+}
+
+const clamp255 = (v: number) => (v < 0 ? 0 : v > 255 ? 255 : v);
+
+function noise(ctx: CanvasRenderingContext2D, size: number, amount: number, rng: Rng) {
   const img = ctx.getImageData(0, 0, size, size);
   const d = img.data;
   for (let i = 0; i < d.length; i += 4) {
-    const n = (Math.random() - 0.5) * amount;
-    d[i] = clamp(d[i] + n);
-    d[i + 1] = clamp(d[i + 1] + n);
-    d[i + 2] = clamp(d[i + 2] + n);
+    const n = (rng() - 0.5) * amount;
+    d[i] = clamp255(d[i] + n);
+    d[i + 1] = clamp255(d[i + 1] + n);
+    d[i + 2] = clamp255(d[i + 2] + n);
   }
   ctx.putImageData(img, 0, 0);
-  void alpha;
 }
 
-const clamp = (v: number) => (v < 0 ? 0 : v > 255 ? 255 : v);
+function shade(hex: string, mul: number) {
+  const c = new THREE.Color(hex);
+  c.multiplyScalar(mul);
+  return `#${c.getHexString()}`;
+}
 
-/** Soft blotches, for weathering and dirt. */
+/** Nudge a colour's hue and saturation, for per-stone / per-brick variety. */
+function vary(hex: string, hueShift: number, satMul: number, lightMul: number) {
+  const c = new THREE.Color(hex);
+  const hsl = { h: 0, s: 0, l: 0 };
+  c.getHSL(hsl);
+  c.setHSL(
+    (hsl.h + hueShift + 1) % 1,
+    Math.min(1, hsl.s * satMul),
+    Math.max(0, Math.min(1, hsl.l * lightMul)),
+  );
+  return `#${c.getHexString()}`;
+}
+
+/**
+ * Draws a shape at every wrapped position it straddles, so nothing is cut off
+ * at the tile seam. Seams are the single loudest tell that a texture repeats.
+ */
+function wrapped(size: number, x: number, y: number, r: number, fn: (x: number, y: number) => void) {
+  const xs = x < r ? [x, x + size] : x > size - r ? [x, x - size] : [x];
+  const ys = y < r ? [y, y + size] : y > size - r ? [y, y - size] : [y];
+  for (const px of xs) for (const py of ys) fn(px, py);
+}
+
 function blotches(
   ctx: CanvasRenderingContext2D,
   size: number,
@@ -38,329 +94,548 @@ function blotches(
   color: string,
   maxR: number,
   alpha: number,
+  rng: Rng,
 ) {
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.fillStyle = color;
   for (let i = 0; i < count; i++) {
-    const x = Math.random() * size;
-    const y = Math.random() * size;
-    const r = Math.random() * maxR + 2;
-    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, color);
-    g.addColorStop(1, 'transparent');
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.fill();
+    const x = rng() * size;
+    const y = rng() * size;
+    const r = rng() * maxR + size * 0.01;
+    wrapped(size, x, y, r, (px, py) => {
+      const g = ctx.createRadialGradient(px, py, 0, px, py, r);
+      g.addColorStop(0, color);
+      g.addColorStop(1, 'transparent');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.fill();
+    });
   }
   ctx.restore();
 }
 
-function bricks(ctx: CanvasRenderingContext2D, size: number, rows: number, base: string, mortar: string) {
-  ctx.fillStyle = mortar;
-  ctx.fillRect(0, 0, size, size);
-  const h = size / rows;
-  const w = h * 2.2;
-  for (let r = 0; r < rows; r++) {
-    const offset = r % 2 ? w / 2 : 0;
-    for (let x = -w; x < size + w; x += w) {
-      // Vary each brick so the wall does not read as a repeating tile.
-      const shade = 0.82 + Math.random() * 0.36;
-      ctx.fillStyle = shadeColor(base, shade);
-      ctx.fillRect(x + offset + 1, r * h + 1, w - 2, h - 2);
-    }
-  }
+/** A lit dome over a shape: bright toward the key light, dark at the rim. */
+function domeFill(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  bright: string,
+  dark: string,
+) {
+  const g = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.4, r * 0.05, cx, cy, r);
+  g.addColorStop(0, bright);
+  g.addColorStop(0.55, bright);
+  g.addColorStop(1, dark);
+  return g;
 }
 
-function shadeColor(hex: string, mul: number) {
-  const c = new THREE.Color(hex);
-  c.multiplyScalar(mul);
-  return `#${c.getHexString()}`;
-}
-
-function draw(name: TextureName): HTMLCanvasElement {
-  const size = 256;
+function drawSurface(name: TextureName, size: number, mode: Mode): HTMLCanvasElement {
   const { canvas, ctx } = makeCanvas(size);
+  const rng = makeRng(hashSeed(name));
+  const S = size / 512; // every layout constant below is authored at 512
+  // Colour in the albedo pass, height in the height pass. Same shapes, so the
+  // normal map lands exactly on the feature it belongs to.
+  const C = (albedo: string, height: string) => (mode === 'albedo' ? albedo : height);
+  // Height gets much less grain than colour: the Sobel below multiplies it,
+  // and per-pixel grit in a normal map shows up as crawling sparkle.
+  const grain = (amount: number) => noise(ctx, size, mode === 'albedo' ? amount : amount * 0.3, rng);
 
   switch (name) {
     case 'brick': {
-      bricks(ctx, size, 10, '#8f4a35', '#c9beb2');
-      blotches(ctx, size, 40, '#2b1a12', 30, 0.18);
-      noise(ctx, size, 22);
-      break;
-    }
-    case 'cobblestone': {
-      ctx.fillStyle = '#40434a';
+      const rows = 8;
+      const h = size / rows;
+      const w = h * 2;
+      ctx.fillStyle = C('#cbbda8', '#3a3a3a');
       ctx.fillRect(0, 0, size, size);
-      const cell = size / 8;
-      for (let y = 0; y < 8; y++) {
-        for (let x = 0; x < 8; x++) {
-          const jx = (Math.random() - 0.5) * 3;
-          const jy = (Math.random() - 0.5) * 3;
-          const shade = 0.7 + Math.random() * 0.6;
-          ctx.fillStyle = shadeColor('#7b7f88', shade);
-          ctx.beginPath();
-          const cx = x * cell + cell / 2 + jx;
-          const cy = y * cell + cell / 2 + jy;
-          ctx.ellipse(cx, cy, cell * 0.44, cell * 0.4, Math.random(), 0, Math.PI * 2);
-          ctx.fill();
+      for (let r = 0; r < rows; r++) {
+        const offset = r % 2 ? w / 2 : 0;
+        for (let x = -w; x < size + w; x += w) {
+          const bx = x + offset + 3 * S;
+          const by = r * h + 3 * S;
+          const bw = w - 6 * S;
+          const bh = h - 6 * S;
+          // Fired clay is never one colour: vary hue as well as value or the
+          // wall reads as a printed pattern.
+          const base = vary('#b03f26', (rng() - 0.5) * 0.05, 0.75 + rng() * 0.5, 0.8 + rng() * 0.45);
+          const g = ctx.createLinearGradient(bx, by, bx, by + bh);
+          g.addColorStop(0, C(shade(base, 1.16), '#ffffff'));
+          g.addColorStop(0.35, C(base, '#efefef'));
+          g.addColorStop(1, C(shade(base, 0.72), '#bdbdbd'));
+          ctx.fillStyle = g;
+          ctx.fillRect(bx, by, bw, bh);
         }
       }
-      noise(ctx, size, 26);
+      if (mode === 'albedo') {
+        blotches(ctx, size, 26, '#3a1a10', size * 0.09, 0.16, rng);
+        blotches(ctx, size, 12, '#e6d3b8', size * 0.05, 0.12, rng);
+      }
+      grain(20);
       break;
     }
+
+    case 'cobblestone': {
+      // Six stones across the tile: at the density set in builder.ts that puts
+      // a cobble at roughly three quarters of the marble's width, which is the
+      // size that stops the street from moiring into grey mush at distance.
+      const n = 6;
+      const cell = size / n;
+      ctx.fillStyle = C('#4a4034', '#2b2b2b');
+      ctx.fillRect(0, 0, size, size);
+      if (mode === 'albedo') blotches(ctx, size, 30, '#241d15', cell * 0.7, 0.35, rng);
+      for (let y = 0; y < n; y++) {
+        for (let x = 0; x < n; x++) {
+          const cx = x * cell + cell / 2 + (rng() - 0.5) * cell * 0.18;
+          const cy = y * cell + cell / 2 + (rng() - 0.5) * cell * 0.18;
+          const rx = cell * (0.42 + rng() * 0.05);
+          const ry = cell * (0.4 + rng() * 0.05);
+          const rot = rng() * Math.PI;
+          // Warm setts with cool ones mixed in, the way a real street is laid.
+          const cool = rng() < 0.35;
+          const base = cool
+            ? vary('#8d94a0', (rng() - 0.5) * 0.04, 0.6 + rng() * 0.6, 0.85 + rng() * 0.35)
+            : vary('#b8a17c', (rng() - 0.5) * 0.05, 0.7 + rng() * 0.6, 0.85 + rng() * 0.35);
+          wrapped(size, cx, cy, rx + 4 * S, (px, py) => {
+            ctx.save();
+            ctx.translate(px, py);
+            ctx.rotate(rot);
+            ctx.scale(1, ry / rx);
+            ctx.fillStyle =
+              mode === 'albedo'
+                ? domeFill(ctx, 0, 0, rx, shade(base, 1.2), shade(base, 0.55))
+                : domeFill(ctx, 0, 0, rx, '#ffffff', '#6a6a6a');
+            ctx.beginPath();
+            ctx.arc(0, 0, rx, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          });
+        }
+      }
+      grain(16);
+      break;
+    }
+
     case 'concrete': {
-      ctx.fillStyle = '#9a9a95';
+      ctx.fillStyle = C('#c2bfb2', '#8a8a8a');
       ctx.fillRect(0, 0, size, size);
-      blotches(ctx, size, 60, '#6f6f6b', 40, 0.25);
-      blotches(ctx, size, 20, '#c8c8c2', 30, 0.2);
-      noise(ctx, size, 20);
+      blotches(ctx, size, 46, C('#9b988c', '#6d6d6d'), size * 0.16, 0.28, rng);
+      blotches(ctx, size, 22, C('#e2dfd2', '#b4b4b4'), size * 0.11, 0.24, rng);
+      // Expansion joints: the only hard edge on an otherwise soft surface, and
+      // the thing that gives a big slab a sense of scale.
+      ctx.strokeStyle = C('#8b887c', '#3c3c3c');
+      ctx.lineWidth = 3 * S;
+      ctx.beginPath();
+      ctx.moveTo(0, size / 2);
+      ctx.lineTo(size, size / 2);
+      ctx.moveTo(size / 2, 0);
+      ctx.lineTo(size / 2, size);
+      ctx.stroke();
+      grain(16);
       break;
     }
+
     case 'asphalt': {
-      ctx.fillStyle = '#3a3b3d';
+      ctx.fillStyle = C('#33363a', '#7a7a7a');
       ctx.fillRect(0, 0, size, size);
-      blotches(ctx, size, 70, '#252628', 26, 0.3);
-      blotches(ctx, size, 30, '#55575a', 18, 0.25);
-      noise(ctx, size, 26);
+      blotches(ctx, size, 60, C('#1d1f22', '#4a4a4a'), size * 0.1, 0.35, rng);
+      // Aggregate. Bright chips are what keep tarmac from going to flat black.
+      for (let i = 0; i < 900; i++) {
+        const x = rng() * size;
+        const y = rng() * size;
+        const r = (0.7 + rng() * 1.8) * S;
+        ctx.fillStyle = C(shade('#9aa0a6', 0.6 + rng() * 0.8), '#e0e0e0');
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      grain(22);
       break;
     }
+
     case 'steel': {
-      ctx.fillStyle = '#6f7479';
+      ctx.fillStyle = C('#7f8b98', '#9a9a9a');
       ctx.fillRect(0, 0, size, size);
       // Brushed vertical grain plus rivet rows: the language of Pittsburgh's
       // truss bridges.
-      for (let x = 0; x < size; x += 2) {
-        ctx.globalAlpha = 0.1;
-        ctx.fillStyle = Math.random() > 0.5 ? '#8b9096' : '#585d62';
-        ctx.fillRect(x, 0, 1, size);
+      for (let x = 0; x < size; x += 2 * S) {
+        ctx.globalAlpha = 0.14;
+        ctx.fillStyle = C(rng() > 0.5 ? '#b3bfcb' : '#535d68', rng() > 0.5 ? '#b0b0b0' : '#888888');
+        ctx.fillRect(x, 0, 2 * S, size);
       }
       ctx.globalAlpha = 1;
-      ctx.fillStyle = '#4c5155';
-      for (let y = 16; y < size; y += 64) {
-        for (let x = 16; x < size; x += 32) {
-          ctx.beginPath();
-          ctx.arc(x, y, 3, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = '#878c92';
-          ctx.beginPath();
-          ctx.arc(x - 0.8, y - 0.8, 1.6, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = '#4c5155';
+      // Plate seams, so a long girder does not read as one endless ribbon.
+      ctx.fillStyle = C('#404a55', '#5a5a5a');
+      ctx.fillRect(0, size / 2 - 2 * S, size, 4 * S);
+      const step = size / 4;
+      for (let y = step / 2; y < size; y += step) {
+        for (let x = step / 2; x < size; x += step / 2) {
+          const r = 5 * S;
+          wrapped(size, x, y, r + 2 * S, (px, py) => {
+            ctx.fillStyle =
+              mode === 'albedo'
+                ? domeFill(ctx, px, py, r, '#c6d2de', '#454e58')
+                : domeFill(ctx, px, py, r, '#ffffff', '#7a7a7a');
+            ctx.beginPath();
+            ctx.arc(px, py, r, 0, Math.PI * 2);
+            ctx.fill();
+          });
         }
       }
-      noise(ctx, size, 14);
+      grain(10);
       break;
     }
+
     case 'steelPainted': {
       // Aztec gold, the colour of the Three Sisters bridges.
-      ctx.fillStyle = '#e2a72e';
+      ctx.fillStyle = C('#f0a81c', '#9a9a9a');
       ctx.fillRect(0, 0, size, size);
-      blotches(ctx, size, 30, '#a8761a', 26, 0.28);
-      blotches(ctx, size, 14, '#f6cd6a', 22, 0.22);
-      ctx.fillStyle = '#b4831f';
-      for (let y = 16; y < size; y += 64) {
-        for (let x = 16; x < size; x += 32) {
-          ctx.beginPath();
-          ctx.arc(x, y, 3, 0, Math.PI * 2);
-          ctx.fill();
+      blotches(ctx, size, 22, C('#b06f0c', '#8c8c8c'), size * 0.11, 0.3, rng);
+      blotches(ctx, size, 14, C('#ffd76a', '#ababab'), size * 0.08, 0.28, rng);
+      ctx.fillStyle = C('#a4690f', '#6a6a6a');
+      ctx.fillRect(0, size / 2 - 2 * S, size, 4 * S);
+      const step = size / 4;
+      for (let y = step / 2; y < size; y += step) {
+        for (let x = step / 2; x < size; x += step / 2) {
+          const r = 5 * S;
+          wrapped(size, x, y, r + 2 * S, (px, py) => {
+            ctx.fillStyle =
+              mode === 'albedo'
+                ? domeFill(ctx, px, py, r, '#ffd67c', '#9c6408')
+                : domeFill(ctx, px, py, r, '#ffffff', '#7a7a7a');
+            ctx.beginPath();
+            ctx.arc(px, py, r, 0, Math.PI * 2);
+            ctx.fill();
+          });
         }
       }
-      noise(ctx, size, 12);
+      grain(10);
       break;
     }
+
     case 'rust': {
-      ctx.fillStyle = '#8a4c28';
+      ctx.fillStyle = C('#a4552a', '#8e8e8e');
       ctx.fillRect(0, 0, size, size);
-      blotches(ctx, size, 80, '#5a2d14', 34, 0.3);
-      blotches(ctx, size, 40, '#c07840', 24, 0.25);
-      noise(ctx, size, 28);
+      blotches(ctx, size, 70, C('#5e2b11', '#5c5c5c'), size * 0.13, 0.32, rng);
+      blotches(ctx, size, 44, C('#e08a3c', '#c0c0c0'), size * 0.09, 0.3, rng);
+      blotches(ctx, size, 18, C('#2f1608', '#3e3e3e'), size * 0.06, 0.35, rng);
+      grain(26);
       break;
     }
+
     case 'grass': {
-      ctx.fillStyle = '#3f6b33';
+      ctx.fillStyle = C('#2f7d2a', '#7c7c7c');
       ctx.fillRect(0, 0, size, size);
-      for (let i = 0; i < 4000; i++) {
-        ctx.strokeStyle = shadeColor('#5c9445', 0.6 + Math.random() * 0.8);
+      blotches(ctx, size, 26, C('#1d5a1c', '#5e5e5e'), size * 0.17, 0.4, rng);
+      blotches(ctx, size, 20, C('#63b23c', '#a8a8a8'), size * 0.13, 0.35, rng);
+      ctx.lineWidth = 1.4 * S;
+      for (let i = 0; i < 6000; i++) {
+        const x = rng() * size;
+        const y = rng() * size;
+        ctx.strokeStyle =
+          mode === 'albedo'
+            ? vary('#57ad34', (rng() - 0.5) * 0.05, 0.7 + rng() * 0.6, 0.6 + rng() * 0.8)
+            : shade('#ffffff', 0.5 + rng() * 0.5);
         ctx.beginPath();
-        const x = Math.random() * size;
-        const y = Math.random() * size;
         ctx.moveTo(x, y);
-        ctx.lineTo(x + (Math.random() - 0.5) * 3, y - Math.random() * 4);
+        ctx.lineTo(x + (rng() - 0.5) * 5 * S, y - rng() * 8 * S);
         ctx.stroke();
       }
-      noise(ctx, size, 16);
+      grain(14);
       break;
     }
+
     case 'water': {
       const g = ctx.createLinearGradient(0, 0, 0, size);
-      g.addColorStop(0, '#2f5d6e');
-      g.addColorStop(1, '#1d3f4e');
+      g.addColorStop(0, C('#2a7fa0', '#909090'));
+      g.addColorStop(1, C('#14556e', '#707070'));
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, size, size);
-      ctx.globalAlpha = 0.16;
-      for (let i = 0; i < 120; i++) {
-        ctx.strokeStyle = '#a9d8e8';
-        ctx.lineWidth = 1 + Math.random();
+      ctx.globalAlpha = 0.2;
+      ctx.strokeStyle = C('#bfeaf7', '#ffffff');
+      for (let i = 0; i < 140; i++) {
+        ctx.lineWidth = (1 + rng() * 2) * S;
         ctx.beginPath();
-        const y = Math.random() * size;
+        const y = rng() * size;
         ctx.moveTo(0, y);
-        for (let x = 0; x <= size; x += 16) {
-          ctx.lineTo(x, y + Math.sin(x * 0.05 + i) * 2);
+        for (let x = 0; x <= size; x += 16 * S) {
+          ctx.lineTo(x, y + Math.sin(x * 0.025 + i) * 4 * S);
         }
         ctx.stroke();
       }
       ctx.globalAlpha = 1;
       break;
     }
+
     case 'glass': {
-      ctx.fillStyle = '#2b4a63';
+      const cell = size / 4;
+      ctx.fillStyle = C('#1d3550', '#3c3c3c');
       ctx.fillRect(0, 0, size, size);
-      const cell = size / 8;
-      for (let y = 0; y < 8; y++) {
-        for (let x = 0; x < 8; x++) {
-          ctx.fillStyle = shadeColor('#4d7ea6', 0.6 + Math.random() * 0.8);
-          ctx.fillRect(x * cell + 2, y * cell + 2, cell - 4, cell - 4);
+      for (let y = 0; y < 4; y++) {
+        for (let x = 0; x < 4; x++) {
+          const px = x * cell + 3 * S;
+          const py = y * cell + 3 * S;
+          const w = cell - 6 * S;
+          const g2 = ctx.createLinearGradient(px, py, px + w, py + w);
+          // Panes catch the sky at different angles; that variance is the only
+          // thing that makes a curtain wall read as glass.
+          const lit = 0.55 + rng() * 0.85;
+          g2.addColorStop(0, C(shade('#8fd0f5', lit * 1.15), '#ffffff'));
+          g2.addColorStop(0.6, C(shade('#3d86bd', lit), '#e6e6e6'));
+          g2.addColorStop(1, C(shade('#1c4f7a', lit), '#d2d2d2'));
+          ctx.fillStyle = g2;
+          ctx.fillRect(px, py, w, w);
         }
       }
       break;
     }
+
     case 'wood': {
-      ctx.fillStyle = '#7b5433';
+      const planks = 4;
+      const ph = size / planks;
+      ctx.fillStyle = C('#2e1c0d', '#2a2a2a');
       ctx.fillRect(0, 0, size, size);
-      for (let i = 0; i < 60; i++) {
-        ctx.globalAlpha = 0.14;
-        ctx.strokeStyle = Math.random() > 0.5 ? '#4e331d' : '#a3754a';
-        ctx.lineWidth = 1 + Math.random() * 3;
+      for (let p = 0; p < planks; p++) {
+        const y0 = p * ph + 2 * S;
+        const ph2 = ph - 4 * S;
+        const base = vary('#95602c', (rng() - 0.5) * 0.03, 0.75 + rng() * 0.5, 0.82 + rng() * 0.4);
+        const g = ctx.createLinearGradient(0, y0, 0, y0 + ph2);
+        g.addColorStop(0, C(shade(base, 1.14), '#f2f2f2'));
+        g.addColorStop(0.5, C(base, '#ffffff'));
+        g.addColorStop(1, C(shade(base, 0.78), '#d0d0d0'));
+        ctx.fillStyle = g;
+        ctx.fillRect(0, y0, size, ph2);
+
+        ctx.save();
         ctx.beginPath();
-        const y = Math.random() * size;
-        ctx.moveTo(0, y);
-        for (let x = 0; x <= size; x += 12) ctx.lineTo(x, y + Math.sin(x * 0.03 + i) * 3);
-        ctx.stroke();
+        ctx.rect(0, y0, size, ph2);
+        ctx.clip();
+        ctx.globalAlpha = 0.22;
+        ctx.lineWidth = 1.5 * S;
+        for (let i = 0; i < 26; i++) {
+          ctx.strokeStyle = C(rng() > 0.5 ? '#4a2c12' : '#c99356', rng() > 0.5 ? '#b8b8b8' : '#ffffff');
+          const y = y0 + rng() * ph2;
+          const amp = rng() * 3 * S;
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          for (let x = 0; x <= size; x += 12 * S) ctx.lineTo(x, y + Math.sin(x * 0.02 + i) * amp);
+          ctx.stroke();
+        }
+        ctx.restore();
       }
-      ctx.globalAlpha = 1;
-      ctx.strokeStyle = '#3d2715';
-      ctx.lineWidth = 2;
-      for (let y = 0; y < size; y += size / 4) {
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(size, y);
-        ctx.stroke();
-      }
-      noise(ctx, size, 16);
+      grain(16);
       break;
     }
+
     case 'ice': {
-      ctx.fillStyle = '#bfe4f0';
+      ctx.fillStyle = C('#a9e2f7', '#c0c0c0');
       ctx.fillRect(0, 0, size, size);
-      blotches(ctx, size, 40, '#ffffff', 40, 0.4);
-      blotches(ctx, size, 20, '#7fb6cc', 30, 0.25);
-      ctx.globalAlpha = 0.3;
-      ctx.strokeStyle = '#ffffff';
-      for (let i = 0; i < 18; i++) {
+      blotches(ctx, size, 34, C('#ffffff', '#ffffff'), size * 0.18, 0.45, rng);
+      blotches(ctx, size, 20, C('#5aa8cc', '#8a8a8a'), size * 0.13, 0.3, rng);
+      ctx.globalAlpha = 0.35;
+      ctx.lineWidth = 2 * S;
+      ctx.strokeStyle = C('#ffffff', '#ffffff');
+      for (let i = 0; i < 22; i++) {
         ctx.beginPath();
-        ctx.moveTo(Math.random() * size, Math.random() * size);
-        ctx.lineTo(Math.random() * size, Math.random() * size);
+        ctx.moveTo(rng() * size, rng() * size);
+        ctx.lineTo(rng() * size, rng() * size);
         ctx.stroke();
       }
       ctx.globalAlpha = 1;
       break;
     }
+
     case 'sandstone': {
-      ctx.fillStyle = '#c2a678';
+      const rows = 4;
+      const h = size / rows;
+      const w = h * 2;
+      ctx.fillStyle = C('#8a7148', '#3a3a3a');
       ctx.fillRect(0, 0, size, size);
-      bricksOverlay(ctx, size);
-      blotches(ctx, size, 40, '#8f754c', 28, 0.2);
-      noise(ctx, size, 18);
+      for (let r = 0; r < rows; r++) {
+        const offset = r % 2 ? w / 2 : 0;
+        for (let x = -w; x < size + w; x += w) {
+          const bx = x + offset + 4 * S;
+          const by = r * h + 4 * S;
+          const base = vary('#dcbc86', (rng() - 0.5) * 0.03, 0.7 + rng() * 0.5, 0.86 + rng() * 0.3);
+          const g = ctx.createLinearGradient(bx, by, bx, by + h);
+          g.addColorStop(0, C(shade(base, 1.1), '#ffffff'));
+          g.addColorStop(1, C(shade(base, 0.78), '#c6c6c6'));
+          ctx.fillStyle = g;
+          ctx.fillRect(bx, by, w - 8 * S, h - 8 * S);
+        }
+      }
+      blotches(ctx, size, 26, C('#9c8050', '#8e8e8e'), size * 0.1, 0.18, rng);
+      grain(18);
       break;
     }
+
     case 'yellowRamp': {
-      ctx.fillStyle = '#f0c419';
+      ctx.fillStyle = C('#ffc60a', '#c8c8c8');
       ctx.fillRect(0, 0, size, size);
-      ctx.fillStyle = '#1c1c1c';
+      ctx.fillStyle = C('#1a1a1a', '#ffffff');
       // Chevrons, so the player reads "grip and go" at a glance.
-      for (let y = -size; y < size * 2; y += 64) {
+      const step = size / 2;
+      for (let y = -size; y < size * 2; y += step) {
         ctx.beginPath();
         ctx.moveTo(0, y);
-        ctx.lineTo(size / 2, y + 32);
+        ctx.lineTo(size / 2, y + step * 0.5);
         ctx.lineTo(size, y);
-        ctx.lineTo(size, y + 18);
-        ctx.lineTo(size / 2, y + 50);
-        ctx.lineTo(0, y + 18);
+        ctx.lineTo(size, y + step * 0.28);
+        ctx.lineTo(size / 2, y + step * 0.78);
+        ctx.lineTo(0, y + step * 0.28);
         ctx.closePath();
         ctx.fill();
       }
+      if (mode === 'albedo') blotches(ctx, size, 16, '#8a6a00', size * 0.07, 0.14, rng);
       break;
     }
+
     case 'incline': {
       // Cable-car red with plank shadows, for the Duquesne Incline cars.
-      ctx.fillStyle = '#8d2b26';
+      const planks = 6;
+      const ph = size / planks;
+      ctx.fillStyle = C('#4d100e', '#2c2c2c');
       ctx.fillRect(0, 0, size, size);
-      ctx.fillStyle = '#6d1f1b';
-      for (let y = 0; y < size; y += 32) ctx.fillRect(0, y, size, 3);
-      blotches(ctx, size, 24, '#3d100e', 24, 0.2);
-      noise(ctx, size, 14);
+      for (let p = 0; p < planks; p++) {
+        const y0 = p * ph + 2 * S;
+        const base = vary('#c8302a', (rng() - 0.5) * 0.02, 0.85 + rng() * 0.3, 0.88 + rng() * 0.28);
+        const g = ctx.createLinearGradient(0, y0, 0, y0 + ph - 4 * S);
+        g.addColorStop(0, C(shade(base, 1.18), '#ffffff'));
+        g.addColorStop(1, C(shade(base, 0.75), '#c4c4c4'));
+        ctx.fillStyle = g;
+        ctx.fillRect(0, y0, size, ph - 4 * S);
+      }
+      // Cream trim line, the detail that makes the car read as a vehicle.
+      ctx.fillStyle = C('#f4e3c0', '#e8e8e8');
+      ctx.fillRect(0, size * 0.5 - 5 * S, size, 10 * S);
+      grain(14);
       break;
     }
   }
   return canvas;
 }
 
-function bricksOverlay(ctx: CanvasRenderingContext2D, size: number) {
-  ctx.strokeStyle = 'rgba(90,70,45,0.5)';
-  ctx.lineWidth = 2;
-  const h = size / 6;
-  const w = h * 2;
-  for (let r = 0; r < 6; r++) {
-    const offset = r % 2 ? w / 2 : 0;
-    ctx.beginPath();
-    ctx.moveTo(0, r * h);
-    ctx.lineTo(size, r * h);
-    ctx.stroke();
-    for (let x = -w; x < size + w; x += w) {
-      ctx.beginPath();
-      ctx.moveTo(x + offset, r * h);
-      ctx.lineTo(x + offset, (r + 1) * h);
-      ctx.stroke();
+/** Sobel a height field into a tangent-space normal map. */
+function normalFromHeight(height: HTMLCanvasElement, strength: number): HTMLCanvasElement {
+  const size = height.width;
+  const src = height.getContext('2d')!.getImageData(0, 0, size, size).data;
+  const { canvas, ctx } = makeCanvas(size);
+  const out = ctx.createImageData(size, size);
+  const at = (x: number, y: number) =>
+    src[((((y % size) + size) % size) * size + (((x % size) + size) % size)) * 4] / 255;
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      // Sobel rather than a plain difference: it averages across three rows,
+      // which keeps per-pixel canvas noise from becoming visible sparkle.
+      const dx =
+        (at(x + 1, y - 1) + 2 * at(x + 1, y) + at(x + 1, y + 1) -
+          at(x - 1, y - 1) - 2 * at(x - 1, y) - at(x - 1, y + 1)) * strength;
+      const dy =
+        (at(x - 1, y + 1) + 2 * at(x, y + 1) + at(x + 1, y + 1) -
+          at(x - 1, y - 1) - 2 * at(x, y - 1) - at(x + 1, y - 1)) * strength;
+      // flipY on the texture means canvas +y is texture -v, so dy needs no flip.
+      const len = Math.hypot(dx, dy, 1);
+      const i = (y * size + x) * 4;
+      out.data[i] = (-dx / len) * 127.5 + 127.5;
+      out.data[i + 1] = (dy / len) * 127.5 + 127.5;
+      out.data[i + 2] = (1 / len) * 127.5 + 127.5;
+      out.data[i + 3] = 255;
     }
   }
+  ctx.putImageData(out, 0, 0);
+  return canvas;
+}
+
+/** Surfaces with no relief worth faking; a normal map on these is wasted work. */
+const FLAT: ReadonlySet<TextureName> = new Set<TextureName>(['water', 'glass', 'ice', 'yellowRamp']);
+
+/** How much the derived normal map bends the light, per surface. */
+const NORMAL_STRENGTH: Partial<Record<TextureName, number>> = {
+  cobblestone: 2.6,
+  brick: 1.8,
+  steel: 1.6,
+  steelPainted: 1.6,
+  wood: 1.1,
+  sandstone: 1.4,
+  concrete: 0.8,
+  asphalt: 0.9,
+  rust: 1.0,
+  grass: 0.9,
+  incline: 0.9,
+};
+
+function finish(tex: THREE.Texture, srgb: boolean) {
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  tex.anisotropy = 16;
+  tex.generateMipmaps = true;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.needsUpdate = true;
+  return tex;
 }
 
 export function getTexture(name: TextureName): THREE.Texture {
   const hit = cache.get(name);
   if (hit) return hit;
-  const tex = new THREE.CanvasTexture(draw(name));
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 8;
+  const tex = finish(new THREE.CanvasTexture(drawSurface(name, ALBEDO_SIZE, 'albedo')), true);
   cache.set(name, tex);
   return tex;
 }
 
-/** A cloned texture with its own repeat, since repeat is per-texture. */
-export function getTextureScaled(name: TextureName, repeatX: number, repeatY: number): THREE.Texture {
-  const key = `${name}:${repeatX.toFixed(3)}:${repeatY.toFixed(3)}`;
+export function getNormalMap(name: TextureName): THREE.Texture | null {
+  if (FLAT.has(name)) return null;
+  const key = `${name}#n`;
   const hit = cache.get(key);
   if (hit) return hit;
-  const tex = getTexture(name).clone();
-  tex.needsUpdate = true;
-  tex.repeat.set(repeatX, repeatY);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  const height = drawSurface(name, HEIGHT_SIZE, 'height');
+  const tex = finish(
+    new THREE.CanvasTexture(normalFromHeight(height, NORMAL_STRENGTH[name] ?? 1)),
+    false,
+  );
   cache.set(key, tex);
   return tex;
 }
 
-/** Environment map for the marble: a cheap sky/ground gradient cube. */
-export function makeEnvMap(renderer: THREE.WebGLRenderer, top: string, bottom: string): THREE.Texture {
-  const { canvas, ctx } = makeCanvas(128);
-  const g = ctx.createLinearGradient(0, 0, 0, 128);
-  g.addColorStop(0, top);
-  g.addColorStop(0.5, '#ffffff');
-  g.addColorStop(1, bottom);
+// ------------------------------------------------------------------ specials
+
+/**
+ * Equirectangular environment: sky gradient, a horizon haze band, ground, and
+ * a bright sun disc. The sun disc is the point — a gradient alone gives the
+ * marble a soft grey sheen, while a hot spot gives it the moving highlight
+ * that makes it read as a polished sphere.
+ */
+export function makeEnvMap(
+  renderer: THREE.WebGLRenderer,
+  opts: { top: string; horizon: string; ground: string; sun: string; sunHeight: number },
+): THREE.Texture {
+  const w = 512;
+  const h = 256;
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext('2d')!;
+
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, opts.top);
+  g.addColorStop(0.42, opts.horizon);
+  g.addColorStop(0.5, opts.horizon);
+  g.addColorStop(0.56, opts.ground);
+  g.addColorStop(1, shade(opts.ground, 0.65));
   ctx.fillStyle = g;
-  ctx.fillRect(0, 0, 128, 128);
-  const tex = new THREE.CanvasTexture(canvas);
+  ctx.fillRect(0, 0, w, h);
+
+  const sy = h * (0.5 - Math.max(-0.9, Math.min(0.9, opts.sunHeight)) * 0.5);
+  const sx = w * 0.3;
+  const glow = ctx.createRadialGradient(sx, sy, 0, sx, sy, h * 0.42);
+  glow.addColorStop(0, opts.sun);
+  glow.addColorStop(0.12, opts.sun);
+  glow.addColorStop(0.4, 'rgba(255,255,255,0.25)');
+  glow.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, w, h);
+
+  const tex = new THREE.CanvasTexture(c);
   tex.mapping = THREE.EquirectangularReflectionMapping;
   tex.colorSpace = THREE.SRGBColorSpace;
   const pmrem = new THREE.PMREMGenerator(renderer);
@@ -368,4 +643,147 @@ export function makeEnvMap(renderer: THREE.WebGLRenderer, top: string, bottom: s
   pmrem.dispose();
   tex.dispose();
   return env;
+}
+
+/**
+ * The marble's own skin: a swirled blue-white glass ball. It is on screen for
+ * every frame of the game, so it gets its own hand-tuned texture rather than
+ * a flat colour.
+ */
+export function makeMarbleTexture(): THREE.Texture {
+  const hit = cache.get('#marble');
+  if (hit) return hit;
+  const w = 512;
+  const h = 256;
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext('2d')!;
+  const rng = makeRng(0x9e3779b9);
+
+  ctx.fillStyle = '#1d6fb8';
+  ctx.fillRect(0, 0, w, h);
+
+  // Broad bands first, then finer swirls on top: the same way a real swirled
+  // glass marble layers, and it keeps the pattern readable while spinning.
+  for (let i = 0; i < 26; i++) {
+    const y = rng() * h;
+    const amp = 10 + rng() * 34;
+    const thick = 8 + rng() * 40;
+    const light = rng();
+    ctx.strokeStyle =
+      light > 0.62 ? '#ffffff' : light > 0.32 ? '#8ddcf5' : '#0d4c8c';
+    ctx.globalAlpha = 0.35 + rng() * 0.45;
+    ctx.lineWidth = thick;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    const phase = rng() * 6.28;
+    ctx.moveTo(-10, y);
+    for (let x = 0; x <= w + 10; x += 12) {
+      ctx.lineTo(x, y + Math.sin(x * 0.012 + phase) * amp);
+    }
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // Bright flecks so the surface has something to catch the eye as it spins.
+  for (let i = 0; i < 260; i++) {
+    const x = rng() * w;
+    const y = rng() * h;
+    const r = 1 + rng() * 5;
+    const gg = ctx.createRadialGradient(x, y, 0, x, y, r);
+    gg.addColorStop(0, 'rgba(255,255,255,0.85)');
+    gg.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = gg;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 16;
+  cache.set('#marble', tex);
+  return tex;
+}
+
+/**
+ * The face of a start or end pad: concentric rings and radial spokes, in the
+ * pad's colour. Drawn rather than modelled because the pad has to read from
+ * directly above at a glance and geometry that thin would z-fight.
+ */
+export function makePadTexture(key: string, rim: string, glyph: string): THREE.Texture {
+  const cached = cache.get(`#pad:${key}`);
+  if (cached) return cached;
+  const size = 256;
+  const { canvas, ctx } = makeCanvas(size);
+  const half = size / 2;
+
+  const g = ctx.createRadialGradient(half, half, 0, half, half, half);
+  g.addColorStop(0, '#20242b');
+  g.addColorStop(0.72, '#171a20');
+  g.addColorStop(1, '#0c0e12');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+
+  ctx.strokeStyle = rim;
+  ctx.lineWidth = 10;
+  ctx.beginPath();
+  ctx.arc(half, half, half * 0.86, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(half, half, half * 0.64, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Radial spokes, echoing the sunburst on the reference pad.
+  ctx.fillStyle = glyph;
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    ctx.save();
+    ctx.translate(half, half);
+    ctx.rotate(a);
+    ctx.beginPath();
+    ctx.moveTo(half * 0.22, -half * 0.05);
+    ctx.lineTo(half * 0.6, -half * 0.02);
+    ctx.lineTo(half * 0.6, half * 0.02);
+    ctx.lineTo(half * 0.22, half * 0.05);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  const inner = ctx.createRadialGradient(half, half, 0, half, half, half * 0.24);
+  inner.addColorStop(0, glyph);
+  inner.addColorStop(1, rim);
+  ctx.fillStyle = inner;
+  ctx.beginPath();
+  ctx.arc(half, half, half * 0.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  cache.set(`#pad:${key}`, tex);
+  return tex;
+}
+
+/** A soft additive disc, shared by every gem and powerup halo. */
+export function getGlowTexture(): THREE.Texture {
+  const hit = cache.get('#glow');
+  if (hit) return hit;
+  const size = 128;
+  const { canvas, ctx } = makeCanvas(size);
+  const half = size / 2;
+  const g = ctx.createRadialGradient(half, half, 0, half, half, half);
+  g.addColorStop(0, 'rgba(255,255,255,1)');
+  g.addColorStop(0.18, 'rgba(255,255,255,0.72)');
+  g.addColorStop(0.45, 'rgba(255,255,255,0.18)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  cache.set('#glow', tex);
+  return tex;
 }

@@ -161,6 +161,194 @@ export function trussBridge(
   return out;
 }
 
+/** Degrees to radians. Level layouts read far better in degrees. */
+export const deg = (d: number) => (d * Math.PI) / 180;
+
+/** A point on a circle, for chaining arc walkways together by hand. */
+export function arcPoint(center: Vec3, radius: number, angle: number, y = center[1]): Vec3 {
+  return [center[0] + Math.cos(angle) * radius, y, center[2] + Math.sin(angle) * radius];
+}
+
+export interface ArcWalkOpts {
+  thickness?: number;
+  rise?: number;
+  bank?: number;
+  texture?: TextureName;
+  surface?: SurfaceName;
+  /** Height of a kerb on the outside / inside of the sweep. 0 for none. */
+  outerWall?: number;
+  innerWall?: number;
+  color?: string;
+}
+
+/**
+ * A curved walkway between two world angles. `ArcBlock` always sweeps
+ * anticlockwise from its local +X, so this wraps the rotation arithmetic that
+ * every curved level otherwise gets wrong: pass the angle you want it to start
+ * at and how far round it goes, both measured in the world.
+ */
+export function arcWalk(
+  center: Vec3,
+  radius: number,
+  width: number,
+  fromAngle: number,
+  sweep: number,
+  opts: ArcWalkOpts = {},
+): Block[] {
+  const thickness = opts.thickness ?? 0.6;
+  const out: Block[] = [
+    {
+      kind: 'arc',
+      pos: center,
+      // A negative yaw maps the arc's local angle 0 onto `fromAngle`.
+      rot: [0, -fromAngle, 0],
+      radius,
+      angle: sweep,
+      width,
+      thickness,
+      rise: opts.rise,
+      bank: opts.bank,
+      texture: opts.texture ?? 'concrete',
+      surface: opts.surface ?? 'default',
+      color: opts.color,
+    },
+  ];
+  // Walls are thin arcs of their own, riding the same sweep. They are what
+  // makes a banked curve readable from inside the marble's low camera.
+  // A bank lifts the outer edge and drops the inner one, so the kerbs have to
+  // follow or they sink into the deck on the high side.
+  const lift = Math.sin(opts.bank ?? 0) * (width / 2);
+  const wall = (r: number, h: number, dy: number) => {
+    out.push({
+      kind: 'arc',
+      pos: [center[0], center[1] + h + dy, center[2]],
+      rot: [0, -fromAngle, 0],
+      radius: r,
+      angle: sweep,
+      width: 0.4,
+      thickness: h + thickness + Math.abs(dy),
+      rise: opts.rise,
+      texture: 'steel',
+      surface: 'default',
+    });
+  };
+  if (opts.outerWall) wall(radius + width / 2 + 0.2, opts.outerWall, lift);
+  if (opts.innerWall) wall(radius - width / 2 - 0.2, opts.innerWall, -lift);
+  return out;
+}
+
+/**
+ * A flight of steps that is physically a smooth ramp. A marble of radius 0.2
+ * cannot climb a real 0.3-unit riser without juddering, so the treads are
+ * non-colliding decoration sitting proud of a hidden slope. This is the only
+ * way stairs are fun in a marble game.
+ */
+export function stairFlight(
+  bottom: Vec3,
+  top: Vec3,
+  width: number,
+  steps: number,
+  texture: TextureName = 'concrete',
+  surface: SurfaceName = 'default',
+): Block[] {
+  const dx = top[0] - bottom[0];
+  const dz = top[2] - bottom[2];
+  const run = Math.hypot(dx, dz);
+  const rise = top[1] - bottom[1];
+  const yaw = Math.atan2(-dz, dx);
+  const angle = Math.atan2(rise, run);
+  const length = Math.hypot(run, rise);
+
+  const out: Block[] = [];
+  // The slope the marble actually rolls on. Yaw aims it up the flight, and a
+  // positive Z rotation lifts the +X end, matching the incline's track bed.
+  out.push({
+    kind: 'box',
+    pos: [(bottom[0] + top[0]) / 2, (bottom[1] + top[1]) / 2 - 0.35, (bottom[2] + top[2]) / 2],
+    size: [length, 0.7, width],
+    rot: [0, yaw, angle],
+    texture,
+    surface,
+  });
+
+  // Treads: thin slabs straddling that slope so the eye reads a staircase
+  // while the physics keeps rolling a clean 20-odd degrees.
+  for (let i = 0; i < steps; i++) {
+    const t = (i + 0.5) / steps;
+    out.push({
+      kind: 'box',
+      pos: [bottom[0] + dx * t, bottom[1] + rise * t, bottom[2] + dz * t],
+      size: [(length / steps) * 0.96, 0.1, width],
+      rot: [0, yaw, 0],
+      texture,
+      surface,
+      noCollide: true,
+      color: '#c9c4b8',
+    });
+  }
+  return out;
+}
+
+/** A support pier: what keeps a walkway over water from looking like it floats. */
+export function pier(pos: Vec3, height: number, radius = 0.5): Block[] {
+  return [
+    {
+      kind: 'cylinder',
+      pos: [pos[0], pos[1] - height / 2, pos[2]],
+      radius,
+      height,
+      segments: 10,
+      texture: 'concrete',
+      surface: 'default',
+      noCollide: true,
+      color: '#8d8b84',
+    },
+  ];
+}
+
+/**
+ * A row of building fronts along a street. Non-colliding by default: they are
+ * a wall the player reads, not a wall the player touches, and a Pittsburgh
+ * street is mostly four-storey brick.
+ */
+export function facadeRow(
+  start: Vec3,
+  dir: Vec3,
+  count: number,
+  spacing: number,
+  depth: number,
+  colors: string[] = ['#8a5a48', '#6f5c52', '#9a7a5e', '#7d6a72'],
+  solid = false,
+): Block[] {
+  const out: Block[] = [];
+  const yaw = Math.atan2(-dir[2], dir[0]);
+  for (let i = 0; i < count; i++) {
+    const h = 7 + ((i * 37) % 5) * 1.6;
+    const p: Vec3 = [
+      start[0] + dir[0] * spacing * i,
+      start[1] + h / 2,
+      start[2] + dir[2] * spacing * i,
+    ];
+    out.push(
+      box(p, [spacing * 0.94, h, depth], 'brick', 'default', {
+        rot: [0, yaw, 0],
+        noCollide: !solid,
+        color: colors[i % colors.length],
+      }),
+    );
+    // A cornice, because a flat brick slab reads as a box and a capped one
+    // reads as a building.
+    out.push(
+      box([p[0], start[1] + h + 0.3, p[2]], [spacing * 0.98, 0.6, depth + 0.5], 'sandstone', 'default', {
+        rot: [0, yaw, 0],
+        noCollide: true,
+        color: '#b6ad9c',
+      }),
+    );
+  }
+  return out;
+}
+
 /** Gems laid out in an arc, the classic Marble Blast pickup line. */
 export function gemArc(center: Vec3, radius: number, count: number, startAngle = 0, sweep = Math.PI): Entity[] {
   const out: Entity[] = [];

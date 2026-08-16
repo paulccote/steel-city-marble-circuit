@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { ArcBlock, Block, BoxBlock, CylinderBlock, RampBlock, TextureName } from './types';
-import { getTextureScaled } from './textures';
+import { getNormalMap, getTexture } from './textures';
 import { SURFACES } from '../engine/physics';
 import { CollisionMesh } from '../engine/collision';
 
@@ -162,26 +162,65 @@ function blockGeometry(b: Block): THREE.BufferGeometry {
 
 /**
  * Texture repeats per world unit. Set so each material reads at a believable
- * physical size next to a 0.4-unit marble: brick courses stay small, concrete
- * slabs stay large, river water barely tiles at all.
+ * physical size next to a 0.4-unit marble, and deliberately loose: the old
+ * values packed six brick courses into a marble's width, which at any distance
+ * collapsed into moire rather than into brick.
+ *
+ * A tile is 512px, so 0.5 here means one tile every two world units — a cobble
+ * ends up about three quarters of the marble's diameter.
  */
 const TEXTURE_DENSITY: Record<TextureName, number> = {
-  concrete: 0.3,
-  brick: 1.6,
-  cobblestone: 1.1,
-  steel: 0.5,
-  steelPainted: 0.5,
-  grass: 0.5,
-  water: 0.05,
-  asphalt: 0.3,
-  glass: 0.22,
-  wood: 0.7,
-  rust: 0.6,
-  ice: 0.3,
-  sandstone: 0.35,
-  yellowRamp: 0.55,
-  incline: 0.9,
+  concrete: 0.14,
+  brick: 0.45,
+  cobblestone: 0.5,
+  steel: 0.35,
+  steelPainted: 0.35,
+  grass: 0.3,
+  water: 0.04,
+  asphalt: 0.16,
+  glass: 0.18,
+  wood: 0.42,
+  rust: 0.5,
+  ice: 0.2,
+  sandstone: 0.24,
+  yellowRamp: 0.4,
+  incline: 0.55,
 };
+
+/**
+ * How each surface answers light. Marble Blast's world reads because its
+ * materials disagree with each other: painted steel is glossy and hot, stone
+ * is matte and dark, glass is a mirror. One roughness for everything is what
+ * makes a scene look like grey sludge.
+ */
+interface SurfaceLook {
+  roughness: number;
+  metalness: number;
+  normalScale?: number;
+  env?: number;
+  /** Multiplied into the map; lifts a texture toward the reference's punch. */
+  tint?: number;
+}
+
+const LOOK: Partial<Record<TextureName, SurfaceLook>> = {
+  cobblestone: { roughness: 0.82, metalness: 0.0, normalScale: 1.15, tint: 1.12 },
+  brick: { roughness: 0.9, metalness: 0.0, normalScale: 0.9, tint: 1.06 },
+  concrete: { roughness: 0.92, metalness: 0.0, normalScale: 0.55 },
+  asphalt: { roughness: 0.95, metalness: 0.0, normalScale: 0.5 },
+  sandstone: { roughness: 0.88, metalness: 0.0, normalScale: 0.8, tint: 1.05 },
+  steel: { roughness: 0.38, metalness: 0.7, normalScale: 0.8, env: 1.5 },
+  steelPainted: { roughness: 0.3, metalness: 0.45, normalScale: 0.7, env: 1.3, tint: 1.08 },
+  rust: { roughness: 0.85, metalness: 0.25, normalScale: 0.9 },
+  wood: { roughness: 0.72, metalness: 0.0, normalScale: 0.7, tint: 1.05 },
+  incline: { roughness: 0.42, metalness: 0.1, normalScale: 0.5, env: 1.2, tint: 1.08 },
+  grass: { roughness: 0.95, metalness: 0.0, normalScale: 0.5, tint: 1.1 },
+  glass: { roughness: 0.06, metalness: 0.9, env: 2.4, tint: 1.1 },
+  ice: { roughness: 0.08, metalness: 0.2, env: 2.0 },
+  water: { roughness: 0.1, metalness: 0.6, env: 1.8 },
+  yellowRamp: { roughness: 0.45, metalness: 0.0, env: 1.1, tint: 1.15 },
+};
+
+const DEFAULT_LOOK: SurfaceLook = { roughness: 0.85, metalness: 0.02 };
 
 /** Scale UVs so textures tile at a consistent world size across block types. */
 function applyUvScale(geo: THREE.BufferGeometry, block: Block) {
@@ -288,13 +327,19 @@ export function buildBlocks(blocks: Block[]): BuiltGeometry {
   for (const bucket of byKey.values()) {
     const merged = mergeGeometries(bucket.geos);
     // Repeat is baked into the UVs, so the texture itself repeats 1:1.
-    const map = getTextureScaled(bucket.texture, 1, 1);
+    const look = LOOK[bucket.texture] ?? DEFAULT_LOOK;
+    const color = new THREE.Color(bucket.color ?? 0xffffff);
+    if (look.tint) color.multiplyScalar(look.tint);
+    const normalMap = getNormalMap(bucket.texture);
     const mat = new THREE.MeshStandardMaterial({
-      map,
-      color: bucket.color ? new THREE.Color(bucket.color) : 0xffffff,
-      roughness: 0.85,
-      metalness: bucket.texture === 'steel' || bucket.texture === 'steelPainted' ? 0.35 : 0.02,
+      map: getTexture(bucket.texture),
+      normalMap,
+      color,
+      roughness: look.roughness,
+      metalness: look.metalness,
+      envMapIntensity: look.env ?? 0.55,
     });
+    if (normalMap) mat.normalScale.setScalar(look.normalScale ?? 1);
     const mesh = new THREE.Mesh(merged, mat);
     mesh.castShadow = true;
     mesh.receiveShadow = true;

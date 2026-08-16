@@ -1,6 +1,8 @@
 import type { Level } from '../game/level';
 import { GO_TIME, POWERUPS } from '../engine/physics';
 import type { PowerupType } from '../game/types';
+import { POWERUP_ICON } from './icons';
+import { el } from './dom';
 
 export function formatTime(ms: number): string {
   const clamped = Math.max(0, ms);
@@ -11,7 +13,7 @@ export function formatTime(ms: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs).padStart(3, '0')}`;
 }
 
-const POWERUP_LABELS: Record<PowerupType, string> = {
+export const POWERUP_LABELS: Record<PowerupType, string> = {
   superSpeed: 'Super Speed',
   superJump: 'Super Jump',
   superBounce: 'Super Bounce',
@@ -27,39 +29,46 @@ const POWERUP_DURATIONS: Partial<Record<PowerupType, number>> = {
   megaMarble: POWERUPS.megaMarble.duration,
 };
 
-export class Hud {
-  readonly root = document.createElement('div');
+/** How long the level name stays on screen after entering a level, in ms. */
+const PLACE_DWELL = 5000;
 
-  private timer = document.createElement('div');
-  private gems = document.createElement('div');
-  private gemCount = document.createElement('span');
-  private powerup = document.createElement('div');
-  private actives = document.createElement('div');
-  private message = document.createElement('div');
-  private hint = document.createElement('div');
-  private place = document.createElement('div');
-  private fps = document.createElement('div');
+/**
+ * The heads-up display. Marble Blast's HUD is three things — clock, gems,
+ * powerup — and nothing else competes with the geometry for attention. This
+ * keeps to that: everything transient (messages, level name) fades out, and
+ * the persistent elements are pure high-contrast type with no panels behind
+ * them.
+ */
+export class Hud {
+  readonly root = el('div', 'hud');
+
+  private timer = el('div', 'hud-timer');
+  private gems = el('div', 'hud-gems');
+  private gemCount = el('span', 'count');
+  private powerup = el('div', 'hud-powerup');
+  private powerupIcon = el('div', 'slot-icon');
+  private actives = el('div', 'hud-actives');
+  private message = el('div', 'hud-message');
+  private hint = el('div', 'hud-hint');
+  private place = el('div', 'hud-place');
+  private fps = el('div', 'hud-fps');
 
   private lastMessage = '';
+  private lastHeld: PowerupType | null = null;
+  private lastActives = '';
   private frameTimes: number[] = [];
+  private showFps = true;
 
   constructor() {
-    this.root.className = 'hud';
-
-    this.timer.className = 'hud-timer';
     this.timer.textContent = '00:00.000';
 
-    this.gems.className = 'hud-gems';
-    const icon = document.createElement('div');
-    icon.className = 'gem-icon';
+    const icon = el('div', 'gem-icon');
     this.gems.append(icon, this.gemCount);
 
-    this.powerup.className = 'hud-powerup';
-    this.actives.className = 'hud-actives';
-    this.message.className = 'hud-message';
-    this.hint.className = 'hud-hint';
-    this.place.className = 'hud-place';
-    this.fps.className = 'hud-fps';
+    // The slot is always drawn — an empty frame tells the player a powerup can
+    // be held here, and stops the whole HUD shifting when one is picked up.
+    const key = el('span', 'slot-key', 'E');
+    this.powerup.append(this.powerupIcon, key);
 
     this.root.append(
       this.timer,
@@ -77,34 +86,52 @@ export class Hud {
     this.root.classList.toggle('visible', visible);
   }
 
+  setShowFps(show: boolean) {
+    this.showFps = show;
+    this.fps.style.display = show ? 'block' : 'none';
+  }
+
+  /** Called when a level starts so the level-name card replays. */
+  reset() {
+    this.lastMessage = '';
+    this.lastHeld = null;
+    this.lastActives = '';
+    this.message.classList.remove('show');
+    this.frameTimes.length = 0;
+  }
+
   update(level: Level, dt: number) {
     this.timer.textContent = formatTime(level.clock);
-    this.timer.classList.toggle(
-      'par-beaten',
-      level.def.goldTime !== undefined && level.clock <= level.def.goldTime,
-    );
+    // Colour is the only par feedback during play: gold while a gold time is
+    // still possible, red once par has slipped away.
+    const gold = level.def.goldTime !== undefined && level.clock <= level.def.goldTime;
+    this.timer.classList.toggle('gold', gold);
+    this.timer.classList.toggle('over-par', !gold && level.clock > level.def.parTime);
 
     this.gemCount.textContent = `${level.gemsCollected}/${level.gemsTotal}`;
     this.gems.classList.toggle('complete', level.gemsCollected >= level.gemsTotal);
     this.gems.style.display = level.gemsTotal > 0 ? 'flex' : 'none';
 
-    // Held powerup slot.
-    if (level.heldPowerup) {
-      this.powerup.textContent = POWERUP_LABELS[level.heldPowerup];
-      this.powerup.classList.add('filled');
-    } else {
-      this.powerup.classList.remove('filled');
+    if (level.heldPowerup !== this.lastHeld) {
+      this.powerupIcon.replaceChildren();
+      if (level.heldPowerup) this.powerupIcon.append(POWERUP_ICON[level.heldPowerup]());
+      this.powerup.classList.toggle('filled', !!level.heldPowerup);
+      this.powerup.dataset.type = level.heldPowerup ?? '';
+      this.lastHeld = level.heldPowerup;
     }
 
     this.renderActives(level);
     this.renderMessage(level);
 
     this.place.textContent = `${level.def.name} — ${level.def.place}`;
+    this.place.classList.toggle('show', level.elapsed < PLACE_DWELL);
 
-    this.frameTimes.push(dt);
-    if (this.frameTimes.length > 40) this.frameTimes.shift();
-    const avg = this.frameTimes.reduce((a, b) => a + b, 0) / this.frameTimes.length;
-    this.fps.textContent = `FPS ${Math.round(1 / Math.max(avg, 1e-4))}`;
+    if (this.showFps) {
+      this.frameTimes.push(dt);
+      if (this.frameTimes.length > 40) this.frameTimes.shift();
+      const avg = this.frameTimes.reduce((a, b) => a + b, 0) / this.frameTimes.length;
+      this.fps.textContent = `FPS ${Math.round(1 / Math.max(avg, 1e-4))}`;
+    }
   }
 
   private renderActives(level: Level) {
@@ -114,15 +141,11 @@ export class Hud {
     if (wanted !== this.lastActives) {
       this.actives.replaceChildren();
       for (const a of level.active) {
-        const chip = document.createElement('div');
-        chip.className = 'active-chip';
+        const chip = el('div', 'active-chip');
         chip.dataset.type = a.type;
-        const label = document.createElement('span');
-        label.textContent = POWERUP_LABELS[a.type];
-        const bar = document.createElement('div');
-        bar.className = 'bar';
-        bar.append(document.createElement('span'));
-        chip.append(label, bar);
+        const bar = el('div', 'bar');
+        bar.append(el('span'));
+        chip.append(POWERUP_ICON[a.type](), el('span', 'name', POWERUP_LABELS[a.type]), bar);
         this.actives.append(chip);
       }
       this.lastActives = wanted;
@@ -137,8 +160,6 @@ export class Hud {
       if (fill) fill.style.width = `${(remaining / total) * 100}%`;
     }
   }
-
-  private lastActives = '';
 
   private renderMessage(level: Level) {
     let msg = '';
@@ -156,6 +177,12 @@ export class Hud {
     if (msg !== this.lastMessage) {
       this.message.textContent = msg;
       this.message.classList.toggle('show', msg !== '');
+      this.message.classList.toggle('go', msg === 'Go!');
+      this.message.classList.toggle('bad', msg === 'Out of Bounds');
+      // Restart the pop animation on every change.
+      this.message.style.animation = 'none';
+      void this.message.offsetWidth;
+      this.message.style.animation = '';
       this.lastMessage = msg;
     }
 
@@ -166,6 +193,6 @@ export class Hud {
 
   flashPowerupUse() {
     this.powerup.classList.add('used');
-    setTimeout(() => this.powerup.classList.remove('used'), 160);
+    setTimeout(() => this.powerup.classList.remove('used'), 200);
   }
 }
