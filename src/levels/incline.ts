@@ -1,5 +1,5 @@
 import type { Block, Entity, LevelDef, Vec3 } from '../game/types';
-import { box, downtownSkyline, gemLine, lampRow, portalGate, river, trussBridge } from './helpers';
+import { box, downtownSkyline, gemLine, kerb, lampRow, portalGate, river, trussBridge } from './helpers';
 
 /**
  * Level 1 — The Duquesne Incline.
@@ -76,6 +76,15 @@ for (const z of [-9.5, 9.5]) {
   );
 }
 
+// The plaza's east edge. Three sides of this square are a brick wall and the
+// fourth is a sixteen-unit drop with nothing drawn on it at all, either side of
+// the street mouth. The kerbs run across the route rather than with it, which
+// would normally be forbidden — but they sit outside the nine units the street
+// is wide, so the only line they stop is one already leaving the level.
+for (const [z0, z1] of [[-13, -5.1], [5.1, 13]] as const) {
+  blocks.push(...kerb([12.85, 0, z0], [12.85, 0, z1], { height: 0.5, color: '#6b5548' }));
+}
+
 blocks.push(...lampRow([-8, 0, -11.6], [1, 0, 0], 4, 6));
 blocks.push(...lampRow([-8, 0, 11.6], [1, 0, 0], 4, 6));
 
@@ -99,6 +108,10 @@ blocks.push(
   box([32, -0.5, -5], [10, 1, 9], 'cobblestone', 'cobblestone'),
   box([32, 0.2, -9.3], [10, 0.6, 0.6], 'steel', 'steel'),
 );
+// The inside of the kink. The street's own kerb stops at x = 28 and the drop
+// carries on for another nine units, which is precisely where a player who
+// took the turn late is pointing.
+blocks.push(...kerb([28, 0, -0.65], [37, 0, -0.65], { color: '#6b7078' }));
 
 entities.push(...gemLine([16, 0.5, 0], [26, 0.5, -2], 3));
 
@@ -166,7 +179,11 @@ for (let i = 0; i < 5; i++) {
     kind: 'gem',
     pos: [
       INCLINE_BOTTOM[0] + INCLINE_RUN * t,
-      INCLINE_BOTTOM[1] + INCLINE_RISE * t + 0.75,
+      // 0.95, not 0.75. The track bed is 0.7 thick and tilted, so its surface
+      // stands 0.39 above the line these are measured from; at 0.75 the gem
+      // cleared it by 0.36 and its point — 0.34 below centre, plus 0.09 of bob
+      // — spent half of every cycle inside the planking.
+      INCLINE_BOTTOM[1] + INCLINE_RISE * t + 0.95,
       INCLINE_BOTTOM[2] + Math.sin(i * 1.1) * 2.4,
     ],
   });
@@ -199,6 +216,15 @@ blocks.push(
   box([TOP_X + 10, TOP_Y + 0.6, 6.6], [24, 1.2, 0.4], 'steel', 'steel'),
 );
 
+// The overlook's west edge, either side of the track mouth: twenty units of
+// drop back down the hillside, and the only side of this platform that had no
+// railing on it. Left open across the ten units the incline arrives through.
+// The slab is centred on TOP_X + 10 and is 24 across, so its west face is at
+// TOP_X - 2, not at TOP_X - 12.
+for (const [z0, z1] of [[-17, -10.4], [0.4, 7]] as const) {
+  blocks.push(...kerb([TOP_X - 1.85, TOP_Y, z0], [TOP_X - 1.85, TOP_Y, z1], { height: 0.5 }));
+}
+
 blocks.push(...lampRow([TOP_X + 2, TOP_Y, -15], [1, 0, 0], 4, 6));
 
 entities.push(
@@ -210,7 +236,11 @@ entities.push(
 
 blocks.push(...river([40, -8, 40], 260, 46));
 blocks.push(...river([40, -8, -60], 220, 40));
-blocks.push(...downtownSkyline([10, -6, 60], 90, 7));
+// Downtown, north across the Monongahela. The cluster used to sit ninety
+// units off a centre inside the level, which put its near arc — a 55-unit
+// tower — inside the plaza. Tighter and much further out: still the same
+// silhouette, now entirely on the far bank.
+blocks.push(...downtownSkyline([40, -6, 170], 60, 7));
 
 export const inclineLevel: LevelDef = {
   id: 'incline',

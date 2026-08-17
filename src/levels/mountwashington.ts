@@ -1,5 +1,5 @@
 import type { Block, Entity, LevelDef, Vec3 } from '../game/types';
-import { box, downtownSkyline, facadeRow, lampRow, portalGate, slopeDeck, stairFlight } from './helpers';
+import { box, downtownSkyline, facadeRow, kerb, lampRow, portalGate, slopeDeck, stairFlight } from './helpers';
 
 /**
  * Level 6 — The Mount Washington Steps.
@@ -61,6 +61,19 @@ function landing(c: Vec3, sx: number, sz: number, dir: number, iceDepth: number,
     ),
     ice([c[0], c[1] - 0.3, c[2] + dir * (sz / 2 - iceDepth / 2)], [sx, 0.6, iceDepth]),
   ];
+  // Every edge that does not get a rail gets a painted line instead. The rails
+  // coming off one landing at a time is the whole shape of this beat, so they
+  // cannot come back — but "no rail" was being drawn as "no edge", and on a
+  // white landing over a white hillside that is nothing at all.
+  const railed = (e: Edge) => rails.includes(e);
+  const far: Edge = dir > 0 ? '+z' : '-z';
+  if (!railed('-x')) out.push(...kerb([c[0] - sx / 2, c[1], c[2] - sz / 2], [c[0] - sx / 2, c[1], c[2] + sz / 2], { solid: false }));
+  if (!railed('+x')) out.push(...kerb([c[0] + sx / 2, c[1], c[2] - sz / 2], [c[0] + sx / 2, c[1], c[2] + sz / 2], { solid: false }));
+  if (!railed(far)) {
+    const fz = c[2] + dir * (sz / 2);
+    out.push(...kerb([c[0] - sx / 2, c[1], fz], [c[0] + sx / 2, c[1], fz], { solid: false }));
+  }
+
   const h = 0.8;
   for (const side of rails) {
     if (side === '-x') out.push(box([c[0] - sx / 2 - 0.2, c[1] + h / 2, c[2]], [0.4, h, sz], 'steel', 'steel'));
@@ -228,6 +241,12 @@ for (let i = 0; i < FLIGHTS.length; i++) {
 // first stretch of Grandview is stone: you are allowed one turn up here.
 blocks.push(
   slopeDeck([25, FLIGHT_RISE * 4, -16], [34.9, 28, -16], 5, 0.6, 'concrete', 'cobblestone'),
+  // Kerbs on the ramp, not paint. It runs *with* the route, it is the only way
+  // up to Grandview, and it is twenty-four units above the hillside: this is
+  // the one edge on the mountain where being turned back is better than being
+  // told what you just fell off.
+  ...kerb([25, FLIGHT_RISE * 4, -18.35], [34.9, 28, -18.35]),
+  ...kerb([25, FLIGHT_RISE * 4, -13.65], [34.9, 28, -13.65]),
 );
 
 /**
@@ -245,6 +264,12 @@ for (const [z0, z1, w, iced] of PAVE) {
   const c: Vec3 = [40.5 - w / 2, 27.7, (z0 + z1) / 2];
   const s: Vec3 = [w, 0.6, z1 - z0];
   blocks.push(iced ? ice(c, s) : box(c, s, 'concrete', 'cobblestone', { color: '#c3c8cc' }));
+  // The cliff edge creeps in from 35 to 37.7 as the pavement narrows, and past
+  // the first stretch there is no railing on it by design. Paint, then, and
+  // only paint: a lip here would hand back the exposure the whole beat is made
+  // of. White kerbstone against snow-white ice would say nothing, so it is the
+  // dark line that carries it, exactly as it does on the bridge.
+  blocks.push(...kerb([40.5 - w, 28, z0], [40.5 - w, 28, z1], { solid: false }));
 }
 // Only the first stretch still has its railing, and a backstop where the ramp
 // lands so overshooting the turn is a bounce rather than a fall.
@@ -293,7 +318,7 @@ for (let i = 0; i < 9; i++) {
 blocks.push(
   box([-130, -30.2, 14], [260, 0.4, 220], 'water', 'water', { noCollide: true, color: '#54646e' }),
 );
-blocks.push(...downtownSkyline([-160, -28, 34], 90, 17));
+blocks.push(...downtownSkyline([-200, -28, 55], 60, 17));
 
 export const mountWashingtonLevel: LevelDef = {
   id: 'mountwashington',

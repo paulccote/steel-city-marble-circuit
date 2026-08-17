@@ -161,7 +161,11 @@ export class Level {
     const skyTop = punch(sky.top, 1.45, 0.98);
     const skyBottom = punch(sky.bottom, 1.6, 1.0);
     const horizon = punch(sky.bottom, 1.2, 1.08);
-    const fogColor = punch(sky.fog, 1.25, 1.0);
+    // Deliberately darker and more saturated than the sky it sits under. Fog
+    // the same value as the sky gives a level no horizon at all: the far river
+    // and the sky above it converge on one grey and the world reads as a void.
+    // Distance should be a band you can see the edge of.
+    const fogColor = punch(sky.fog, 1.4, 0.88);
     const bounce = punch(sky.ambient, 1.7, 1.15);
     const sunColor = punch(sky.sunColor, 1.8, 1.0);
     const sunDir = v3(sky.sunDir).normalize();
@@ -175,7 +179,14 @@ export class Level {
     // anything the marble can touch — take a much tighter curve of their own
     // (see setBackdropFog / extendMaterial in builder.ts).
     this.scene.fog = new THREE.Fog(fogColor, sky.fogNear, sky.fogFar * 1.35);
-    setBackdropFog(sky.fogNear * 0.85, sky.fogFar * 0.7);
+    // Water reflects the haze band, not the bright sky above it. Handing it
+    // the fog colour is what puts a hard edge between the far river and the
+    // sky instead of letting the two meet in the middle and cancel out.
+    setBackdropFog(
+      sky.fogNear * 0.85,
+      sky.fogFar * 0.7,
+      fogColor.clone().lerp(horizon, 0.3),
+    );
     this.scene.background = skyBottom;
 
     // Sky dome: a large inverted sphere with a vertical gradient. Cheaper and
@@ -191,6 +202,9 @@ export class Level {
         top: { value: skyTop },
         bottom: { value: skyBottom },
         horizon: { value: horizon },
+        // What lies past the end of the level: haze over distant ground, a
+        // clear step darker than the sky.
+        ground: { value: fogColor.clone().multiplyScalar(0.8) },
         sunDir: { value: sunDir.clone() },
         sunColor: { value: sunColor },
       },
@@ -203,12 +217,17 @@ export class Level {
         }`,
       fragmentShader: `
         uniform vec3 top; uniform vec3 bottom; uniform vec3 horizon;
+        uniform vec3 ground;
         uniform vec3 sunDir; uniform vec3 sunColor;
         varying vec3 vDir;
         void main() {
           float t = clamp(vDir.y * 0.5 + 0.5, 0.0, 1.0);
           vec3 col = mix(bottom, top, pow(t, 0.65));
           col = mix(col, horizon, pow(1.0 - abs(vDir.y), 10.0));
+          // A hard-ish line at eye level. Every one of these levels is set on
+          // a river or a hillside and stops well short of the horizon, so
+          // without this the dome hands them a white void to end in.
+          col = mix(col, ground, smoothstep(0.015, -0.045, vDir.y));
           float s = max(dot(vDir, sunDir), 0.0);
           col += sunColor * (pow(s, 900.0) * 2.0 + pow(s, 14.0) * 0.22);
           gl_FragColor = vec4(col, 1.0);
@@ -328,7 +347,7 @@ export class Level {
           // The finish beacon is how the player finds the exit from across
           // the map, so it is deliberately tall and bright.
           const beam = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.62, 0.62, 14, 20, 1, true),
+            new THREE.CylinderGeometry(0.42, 0.42, 14, 20, 1, true),
             new THREE.MeshBasicMaterial({
               color: 0x59ff9c,
               transparent: true,
@@ -743,7 +762,10 @@ export class Level {
 
     if (this.endPad && this.phase === 'playing' && this.gemsCollected >= this.gemsTotal) {
       const d = p.clone().sub(this.endPad);
-      if (Math.abs(d.y) < 1.6 && d.x * d.x + d.z * d.z < 1.4 * 1.4) this.finish();
+      // Slightly wider than the pad decal so a fast marble clipping the edge
+      // still counts, but not so wide that the run ends short of the target.
+      const reachXZ = 0.8;
+      if (Math.abs(d.y) < 1.6 && d.x * d.x + d.z * d.z < reachXZ * reachXZ) this.finish();
     }
   }
 
@@ -1088,8 +1110,12 @@ function makePad(color: number): THREE.Object3D {
   // so anything with thickness either z-fights the floor it sits on or the
   // marble sinks into it. A flat disc plus a polygon offset wins the depth
   // test outright, which is the fix rather than a cover-up.
+  // Three marble diameters across, not six. At 1.15 the pad filled the bottom
+  // third of the frame and the marble sitting on it read as a bead dropped on
+  // a dinner plate — the protagonist has to be the biggest thing in its own
+  // close-up.
   const face = new THREE.Mesh(
-    new THREE.CircleGeometry(1.15, 48),
+    new THREE.CircleGeometry(0.62, 40),
     new THREE.MeshStandardMaterial({
       map,
       emissiveMap: map,
@@ -1107,8 +1133,8 @@ function makePad(color: number): THREE.Object3D {
   face.position.y = 0.002;
   group.add(face);
 
-  const glow = makeHalo(color, 2.4, 0.35);
-  glow.position.y = 0.35;
+  const glow = makeHalo(color, 1.35, 0.35);
+  glow.position.y = 0.25;
   group.add(glow);
   return group;
 }

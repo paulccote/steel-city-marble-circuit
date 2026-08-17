@@ -1,5 +1,5 @@
 import type { Block, Entity, LevelDef, Vec3 } from '../game/types';
-import { box, downtownSkyline, gemLine, lampRow, portalGate, slopeDeck } from './helpers';
+import { box, downtownSkyline, dropLip, gemLine, kerb, lampRow, portalGate, slopeDeck } from './helpers';
 
 /**
  * Level 3 — The Roberto Clemente Bridge.
@@ -30,17 +30,44 @@ const CHAIN_Z = 4.9;
 const TOWER_S = -16;
 const TOWER_N = 112;
 
-/** Deck panel: yellow steel roadway, kerbed so the edge is felt before it is seen. */
-const deckPanel = (x0: number, x1: number): Block[] => [
-  box([(x0 + x1) / 2, -0.3, 0], [x1 - x0, 0.6, DECK_Z], 'steelPainted', 'steel', { color: GOLD }),
-  box([(x0 + x1) / 2, 0.15, -DECK_Z / 2 + 0.15], [x1 - x0, 0.3, 0.3], 'steel', 'steel'),
-  box([(x0 + x1) / 2, 0.15, DECK_Z / 2 - 0.15], [x1 - x0, 0.3, 0.3], 'steel', 'steel'),
-];
+/**
+ * Deck panel: yellow steel roadway, kerbed so the edge is felt before it is
+ * seen. x0 must be the south end. A panel built the other way round is a box
+ * with a negative length, which three.js turns inside out: the roadway keeps
+ * its collision and loses its top face, and the player rolls along forty units
+ * of bridge looking straight through it at the Allegheny. That is exactly how
+ * this level came to read as open water, so the order is asserted here.
+ */
+const deckPanel = (x0: number, x1: number): Block[] => {
+  if (x1 <= x0) throw new Error(`deckPanel: ${x0} is not south of ${x1}`);
+  return [
+    box([(x0 + x1) / 2, -0.3, 0], [x1 - x0, 0.6, DECK_Z], 'steelPainted', 'steel', { color: GOLD }),
+    ...kerb([x0, 0, -DECK_Z / 2 + 0.15], [x1, 0, -DECK_Z / 2 + 0.15], { color: '#4a5058' }),
+    ...kerb([x0, 0, DECK_Z / 2 - 0.15], [x1, 0, DECK_Z / 2 - 0.15], { color: '#4a5058' }),
+  ];
+};
 
 // -------------------------------------------------------------- the Allegheny
+// Fourteen units down. A flat plane that big has no near edge and no far edge —
+// it converges on the horizon at exactly the height the deck does — so from a
+// marble's eye it is not obviously below anything at all. Everything in this
+// section exists to answer the one question the plane cannot: how far down.
 blocks.push(
-  box([80, -14.2, 0], [500, 0.4, 400], 'water', 'water', { noCollide: true, color: '#4a626d' }),
+  // Darker than anything the player can stand on, which is the one rule that
+  // makes a river read as a river from a marble's eye height.
+  box([80, -14.2, 0], [500, 0.4, 400], 'water', 'water', { noCollide: true, color: '#2c414c' }),
 );
+
+/** Masonry down to the water. The cheapest possible statement of "fourteen". */
+const riverPier = (x: number, z: number, w: number, d: number): Block[] => [
+  box([x, -7.4, z], [w, 13.6, d], 'sandstone', 'default', { noCollide: true, color: '#7d766a' }),
+  // A coping course at the waterline: the pier has to *meet* the river
+  // somewhere, and that meeting is what fixes the water's depth for the eye.
+  box([x, -13.4, z], [w + 1.2, 1.2, d + 1.2], 'sandstone', 'default', {
+    noCollide: true,
+    color: '#6a6459',
+  }),
+];
 
 // --------------------------------------------------- south abutment, downtown
 // The downtown end sits up on the bluff and ramps down onto the deck, which is
@@ -91,6 +118,33 @@ for (let i = 0; i < 4; i++) {
   }
 }
 
+// The wharf. The plaza has to stop somewhere and the river has to start
+// somewhere, and until this was here they were the same line: seventeen units
+// of drop with nothing drawn on it. It is split either side of the ramp mouth,
+// which is the one place the land does come down to meet the bridge.
+for (const [z0, z1] of [[-34, -5], [5, 34]] as const) {
+  blocks.push(
+    box([-31.6, -5.6, (z0 + z1) / 2], [3.2, 17.6, z1 - z0], 'sandstone', 'default', {
+      noCollide: true,
+      color: '#7d766a',
+    }),
+    // Coping along the top, a shade lighter, so the bank reads as an edge and
+    // not as a cliff-coloured smear against the water. Barely proud of the
+    // plaza: it is non-colliding, and a non-colliding course standing half a
+    // unit up would look exactly like the kerb below and behave nothing like it.
+    box([-31.6, PLAZA_Y - 0.03, (z0 + z1) / 2], [4, 0.2, z1 - z0], 'sandstone', 'default', {
+      noCollide: true,
+      color: '#a49a88',
+    }),
+  );
+}
+// The plaza's own east edge, either side of the ramp mouth. Seventeen units
+// down to the Allegheny, three metres from the start pad, and the one edge of
+// the four this square has that had nothing on it.
+for (const [z0, z1] of [[-12, -4.6], [4.6, 12]] as const) {
+  blocks.push(...kerb([-32.15, PLAZA_Y, z0], [-32.15, PLAZA_Y, z1], { height: 0.5, color: '#9a9084' }));
+}
+
 blocks.push(...lampRow([-50, PLAZA_Y, -10.4], [1, 0, 0], 3, 7));
 blocks.push(...lampRow([-50, PLAZA_Y, 10.4], [1, 0, 0], 3, 7));
 
@@ -102,7 +156,15 @@ entities.push({ kind: 'startPad', pos: [-40, PLAZA_Y, 0] });
 // drives up to it.
 blocks.push(...deckPanel(-26, 2));
 blocks.push(...deckPanel(6.5, 20));
-blocks.push(...deckPanel(26, TOWER_S));
+// 26 to 40, not 26 to the south tower: the tower is at -16, behind the player,
+// so that panel was built backwards and swallowed both holes. Forty is where
+// the suspender run starts, and every gem and checkpoint in this stretch was
+// already measured against it.
+blocks.push(...deckPanel(26, 40));
+
+// The two holes are the level's first ask, so they are marked as such: paint
+// across the last unit of deck and a chevron board either side of the lane.
+blocks.push(...dropLip([2, 0, 0], DECK_Z - 2.4), ...dropLip([20, 0, 0], DECK_Z - 2.4));
 
 entities.push(
   ...gemLine([-20, 0.5, 0], [-4, 0.5, 0], 2),
@@ -126,6 +188,11 @@ const tower = (x: number): Block[] => {
   return out;
 };
 blocks.push(...tower(TOWER_S), ...tower(TOWER_N));
+// Each tower stands on a pier, because a tower that stops at the deck is a
+// tower floating on the same nothing the deck is floating on.
+blocks.push(...riverPier(TOWER_S, 0, 6, 13), ...riverPier(TOWER_N, 0, 6, 13));
+// One approach bent between the wharf and the south tower.
+blocks.push(...riverPier(-24, 0, 3.4, 10));
 
 // The eyebar chain: a parabola saddle to saddle, sagging to just above deck
 // level at midspan. That profile is what makes a self-anchored suspension
@@ -179,10 +246,21 @@ for (let x = -10; x <= 38; x += 6) {
       color: GOLD,
     });
   }
-  // A collar where each rod meets the deck, so the rank has a base line.
-  blocks.push(
-    box([x, 0.18, 0], [0.4, 0.24, CHAIN_Z * 2 + 1], 'steel', 'steel', { noCollide: true }),
-  );
+  // A collar where each rod meets the deck, so the rank has a base line. Only
+  // where there is a deck for it to be bolted to: the two holes are the point
+  // of this stretch and a steel bar lying across one is a promise of floor.
+  const overHole = (2 - 0.4 < x && x < 6.5 + 0.4) || (20 - 0.4 < x && x < 26 + 0.4);
+  if (!overHole) {
+    // 0.1 tall and no wider than the roadway. At 0.24 it stood as high as a
+    // kerb and ran out past the deck edge, so from a marble's eye every six
+    // units of bridge had what looked like a step across it and was not.
+    blocks.push(
+      box([x, 0.05, 0], [0.3, 0.1, DECK_Z - 0.6], 'steel', 'steel', {
+        noCollide: true,
+        color: '#6b7078',
+      }),
+    );
+  }
 }
 
 // The portal through the south tower: the frame you roll under to get onto the
@@ -208,7 +286,10 @@ blocks.push(
 // use stone's restitution and the marble is steerable again within two units.
 const GAPS = [4.5, 5, 5.5, 6, 6.5, 7];
 const PLAT = 5.5;
-let edge = TOWER_S;
+// The run starts at the end of the last deck panel. It used to start at the
+// south tower, 56 units back, which stacked the first three platforms on top of
+// the roadway and left sixty units of open river before the north tower.
+let edge = 40;
 for (const gap of GAPS) {
   const x0 = edge + gap;
   const cx = x0 + PLAT / 2;
@@ -216,6 +297,12 @@ for (const gap of GAPS) {
     box([cx, -0.3, 0], [PLAT, 0.6, 5], 'steelPainted', 'cobblestone', { color: GOLD }),
     // Cross-beam under the panel, carrying the hanger rods up to the chain.
     box([cx, -0.75, 0], [0.5, 0.3, 10.4], 'steel', 'steel', { noCollide: true }),
+    // Kerbs down the long sides only. A platform you land on and jump off
+    // cannot have a lip across either end, but the sides are exactly where a
+    // marble that lands crooked leaves — and over open water a 5-unit panel
+    // with no rim is the hardest thing in the game to judge.
+    ...kerb([x0, 0, -2.35], [x0 + PLAT, 0, -2.35], { color: '#4a5058' }),
+    ...kerb([x0, 0, 2.35], [x0 + PLAT, 0, 2.35], { color: '#4a5058' }),
   );
   for (const z of [-CHAIN_Z, CHAIN_Z]) {
     const top = chainY(cx);
@@ -248,8 +335,11 @@ entities.push(
 
 // Chevron boards at the lip. Nothing about this gap looks different from the
 // last six, so the level says out loud that it is, and says it from far enough
-// back to act on. Non-colliding: a warning, not a wall.
-for (const z of [-3.6, 3.6]) {
+// back to act on. Non-colliding: a warning, not a wall. These are the tall
+// pair — 2.4 rather than the standard 1.6 — because this is the one gap in the
+// level a player is expected to arrive at already carrying a powerup.
+blocks.push(...dropLip([130, 0, 0], 6.6, { boards: false }));
+for (const z of [-4.2, 4.2]) {
   blocks.push(
     box([129.4, 1.5, z], [0.4, 2.4, 1.8], 'steelPainted', 'default', {
       color: '#efd23c',
@@ -264,7 +354,15 @@ blocks.push(
   box([157, -0.3, 0], [26, 0.6, 20], 'concrete', 'default'),
   box([157, 0.7, -10.2], [26, 2, 0.6], 'concrete', 'default'),
   box([157, 0.7, 10.2], [26, 2, 0.6], 'concrete', 'default'),
+  // The north bank: the abutment and the ballpark behind it are the far side of
+  // the river, so the ground under them has to come up out of it.
+  ...riverPier(157, 0, 26, 20),
+  ...riverPier(190, 0, 46, 56),
 );
+// A chevron facing back the way you came, on the abutment's lip. It is the
+// landing for the fourteen-unit gap, and from the far side of that gap the only
+// thing that tells you where the concrete starts is its own edge.
+blocks.push(...dropLip([144.4, 0, 0], 18, { yaw: Math.PI, boards: false }));
 
 // -------------------------------------------------------------------- PNC Park
 // The bridge lands at the home-plate gate, which is where it lands in life.
@@ -326,7 +424,7 @@ function sisterBridge(z: number): Block[] {
 }
 blocks.push(...sisterBridge(-64), ...sisterBridge(-128));
 
-blocks.push(...downtownSkyline([-130, -6, 30], 80, 5));
+blocks.push(...downtownSkyline([-190, -6, 25], 55, 5));
 
 const spawn: Vec3 = [-40, PLAZA_Y + 0.5, 0];
 

@@ -78,6 +78,10 @@ function arcGeometry(b: ArcBlock): THREE.BufferGeometry {
 
   const pos: number[] = [];
   const uv: number[] = [];
+  // `v` is handed the face's real width in world units, not 0..1. A ten-unit
+  // walkway with 0..1 across it gets one tile stretched over the whole width,
+  // which is why every banked curve in the game was streaked lengthways while
+  // the straight decks beside it tiled correctly.
   const quad = (
     p0: THREE.Vector3,
     p1: THREE.Vector3,
@@ -85,11 +89,12 @@ function arcGeometry(b: ArcBlock): THREE.BufferGeometry {
     p3: THREE.Vector3,
     u0: number,
     u1: number,
+    v: number,
   ) => {
     const pts = [p0, p1, p2, p0, p2, p3];
     const uvs = [
-      [u0, 0], [u1, 0], [u1, 1],
-      [u0, 0], [u1, 1], [u0, 1],
+      [u0, 0], [u1, 0], [u1, v],
+      [u0, 0], [u1, v], [u0, v],
     ];
     for (let i = 0; i < 6; i++) {
       pos.push(pts[i].x, pts[i].y, pts[i].z);
@@ -105,16 +110,16 @@ function arcGeometry(b: ArcBlock): THREE.BufferGeometry {
     const u1 = ((i + 1) / segments) * Math.abs(b.angle) * b.radius;
 
     // Top surface.
-    quad(a.inner, c.inner, c.outer, a.outer, u0, u1);
+    quad(a.inner, c.inner, c.outer, a.outer, u0, u1, b.width);
     // Bottom.
     const ai = a.inner.clone().add(down);
     const ao = a.outer.clone().add(down);
     const ci = c.inner.clone().add(down);
     const co = c.outer.clone().add(down);
-    quad(ao, co, ci, ai, u0, u1);
+    quad(ao, co, ci, ai, u0, u1, b.width);
     // Sides.
-    quad(a.inner, ai, ci, c.inner, u0, u1);
-    quad(c.outer, co, ao, a.outer, u0, u1);
+    quad(a.inner, ai, ci, c.inner, u0, u1, th);
+    quad(c.outer, co, ao, a.outer, u0, u1, th);
   }
 
   // Caps, so the segment is a closed solid and the marble cannot enter it.
@@ -176,7 +181,11 @@ const TEXTURE_DENSITY: Record<TextureName, number> = {
   steel: 0.35,
   steelPainted: 0.35,
   grass: 0.3,
-  water: 0.04,
+  // A repeat every seventeen units. Longer waves suited the open river and
+  // turned the Point's thirty-unit fountain basin, which is this same texture,
+  // into a field of dunes; shorter ones tiled into a visible mesh across four
+  // hundred units of the Allegheny.
+  water: 0.06,
   // A tile every eight units, so one pane of the curtain wall is about a
   // metre. At 0.28 a pane was 10cm and mipped to a flat wash long before the
   // tower did, which is what made the skyline read as coloured cardboard.
@@ -208,7 +217,7 @@ const MACRO: Partial<Record<TextureName, MacroLook>> = {
   // A span of sixteen puts a paving course and a drainage fall inside the
   // fifteen-odd units of ground a player can actually see ahead of the
   // marble. Thirty was truer to a real plaza and completely invisible.
-  cobblestone: { kind: 'paving', span: 7, strength: 1.0 },
+  cobblestone: { kind: 'paving', span: 16, strength: 0.8 },
   concrete: { kind: 'paving', span: 22, strength: 0.55 },
   asphalt: { kind: 'paving', span: 20, strength: 0.5 },
   sandstone: { kind: 'stone', span: 14, strength: 0.4 },
@@ -218,6 +227,9 @@ const MACRO: Partial<Record<TextureName, MacroLook>> = {
   steel: { kind: 'metal', span: 16, strength: 0.3 },
   steelPainted: { kind: 'metal', span: 18, strength: 0.26 },
   rust: { kind: 'metal', span: 12, strength: 0.35 },
+  // Long, slow runs of light and shade across the river, so the chop does not
+  // tile into corduroy over four hundred units of open water.
+  water: { kind: 'metal', span: 63, strength: 0.4 },
   // Wide, because this one is breaking up a row of towers rather than a
   // surface: a repeat shorter than a building would band each tower instead.
   glass: { kind: 'city', span: 41, strength: 0.42 },
@@ -256,7 +268,11 @@ const LOOK: Partial<Record<TextureName, SurfaceLook>> = {
   // cut-out. Diffuse shading is what puts a sunlit face against a shaded one.
   glass: { roughness: 0.52, metalness: 0.12, env: 0.7, tint: 0.92 },
   ice: { roughness: 0.08, metalness: 0.2, env: 2.0 },
-  water: { roughness: 0.1, metalness: 0.6, env: 1.8 },
+  // Rough enough to spread the sun into a glitter path rather than one point,
+  // and only lightly metallic: a fully metallic river takes all its value from
+  // the environment map, which is the same sky everywhere, so it comes out as
+  // one flat sheet of grey.
+  water: { roughness: 0.2, metalness: 0.28, env: 1.5, normalScale: 0.45 },
   yellowRamp: { roughness: 0.45, metalness: 0.0, env: 1.1, tint: 1.15 },
 };
 
@@ -282,6 +298,21 @@ function applyUvScale(geo: THREE.BufferGeometry, block: Block) {
       for (let i = f * 4; i < f * 4 + 4; i++) {
         uv.setXY(i, uv.getX(i) * su * scale, uv.getY(i) * sv * scale);
       }
+    }
+  } else if (block.kind === 'cylinder') {
+    // CylinderGeometry's UVs run 0..1 around the side and 0..1 across each cap,
+    // so they need the same per-face world scaling a box gets. Without it the
+    // Point's thirty-metre fountain basin and a bollard both got exactly one
+    // tile, and the basin came out as a single flat colour — a sheet of mud
+    // where there should have been water.
+    const c = block as CylinderBlock;
+    const nrm = geo.getAttribute('normal');
+    const circumference = 2 * Math.PI * c.radius;
+    for (let i = 0; i < uv.count; i++) {
+      const cap = !nrm || Math.abs(nrm.getY(i)) > 0.9;
+      const su = cap ? c.radius * 2 : circumference;
+      const sv = cap ? c.radius * 2 : c.height;
+      uv.setXY(i, uv.getX(i) * su * scale, uv.getY(i) * sv * scale);
     }
   } else {
     for (let i = 0; i < uv.count; i++) {
@@ -348,8 +379,12 @@ const DEFAULT_TEXTURE: TextureName = 'concrete';
  */
 let backdropFog = { near: 40, far: 160 };
 
-export function setBackdropFog(near: number, far: number) {
+/** The sky colour at the horizon, which is what water reflects at a distance. */
+let horizonColor = new THREE.Color(0xb8c4cc);
+
+export function setBackdropFog(near: number, far: number, horizon?: THREE.Color) {
   backdropFog = { near, far };
+  if (horizon) horizonColor = horizon.clone();
 }
 
 /**
@@ -449,6 +484,7 @@ function extendMaterial(
   mat: THREE.MeshStandardMaterial,
   macro: MacroLook | undefined,
   backdrop: boolean,
+  water: boolean,
   key: string,
 ) {
   mat.onBeforeCompile = (shader) => {
@@ -490,7 +526,7 @@ function extendMaterial(
             ? vSurfPos.xz
             : ( mn.x > mn.z ? vSurfPos.zy : vSurfPos.xy );
           vec3 macro = texture2D( macroMap, macroUv * macroScale ).rgb;
-          diffuseColor.rgb *= mix( vec3( 1.0 ), macro * 2.0, macroStrength ); diffuseColor.rgb *= vec3(1.0, 0.2, 0.2);`,
+          diffuseColor.rgb *= mix( vec3( 1.0 ), macro * 2.0, macroStrength );`,
         )
         .replace(
           '#include <roughnessmap_fragment>',
@@ -499,6 +535,28 @@ function extendMaterial(
           // surface also goes glossier, which is what sells it as wet stone
           // rather than as a stain painted on.
           roughnessFactor *= mix( 1.0, 0.55 + macro.g, macroStrength * 0.6 );`,
+        );
+    }
+
+    if (water) {
+      shader.uniforms.horizonColor = { value: horizonColor.clone() };
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          'varying vec3 vSurfNormal;',
+          'varying vec3 vSurfNormal;\nuniform vec3 horizonColor;',
+        )
+        .replace(
+          '#include <map_fragment>',
+          `#include <map_fragment>
+          // Fresnel. Water seen from above is dark and shows its own colour;
+          // seen at a grazing angle it is a mirror of the sky. That gradient
+          // from dark underfoot to bright at the far bank is the strongest cue
+          // there is that a surface is lying flat rather than standing up, and
+          // it is what a plain tiled plane can never have. Taken against world
+          // up rather than the rippled normal, so the ramp stays smooth and
+          // the ripples only break the highlight.
+          float grazing = pow( 1.0 - clamp( normalize( cameraPosition - vSurfPos ).y, 0.0, 1.0 ), 3.0 );
+          diffuseColor.rgb = mix( diffuseColor.rgb, horizonColor, 0.12 + grazing * 0.7 );`,
         );
     }
 
@@ -610,7 +668,7 @@ export function buildBlocks(blocks: Block[]): BuiltGeometry {
       envMapIntensity: look.env ?? 0.55,
     });
     if (normalMap) mat.normalScale.setScalar(look.normalScale ?? 1);
-    extendMaterial(mat, MACRO[texture], backdrop, key);
+    extendMaterial(mat, MACRO[texture], backdrop, texture === 'water', key);
     const mesh = new THREE.Mesh(merged, mat);
     // Backdrop never reaches the shadow frustum, so it only costs a pass.
     mesh.castShadow = !backdrop;

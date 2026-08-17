@@ -32,8 +32,12 @@ const BASIN_Y = -1;
 // ------------------------------------------------------------- the confluence
 // One water plane under everything. At the Point the rivers are the ground
 // plane, so there is no reason to model three of them.
+// Deliberately darker than the fountain basin, which is the other water in this
+// level and the only water in it you are allowed to stand in. Two sheets of
+// water a unit apart, one a five-second wade and one the end of the run, cannot
+// be the same colour.
 blocks.push(
-  box([20, -2.4, 0], [420, 0.4, 420], 'water', 'water', { noCollide: true, color: '#5c7a86' }),
+  box([20, -2.4, 0], [420, 0.4, 420], 'water', 'water', { noCollide: true, color: '#2f4a56' }),
 );
 
 // -------------------------------------------------------------- the great lawn
@@ -63,7 +67,10 @@ blocks.push(
   box([84, TERRACE_Y + 0.9, -15.5], [22, 2.8, 1], 'concrete', 'default'),
   box([84, TERRACE_Y + 0.9, 15.5], [22, 2.8, 1], 'concrete', 'default'),
 );
-blocks.push(...stairFlight([73, 0, 0], [79, TERRACE_Y, 0], 12, 7, 'concrete', 'cobblestone'));
+// The flight has to sit *outside* the terrace slab. Built inside its footprint
+// it is buried under it, and the terrace edge becomes a three-unit blind drop
+// onto the lawn instead of a set of steps.
+blocks.push(...stairFlight([67, 0, 0], [73, TERRACE_Y, 0], 12, 7, 'concrete', 'cobblestone'));
 
 // The park gate. Twelve units ahead of the pad, which at this camera pitch is
 // close enough that the pylons run off the top of the frame and read as mass.
@@ -134,6 +141,13 @@ blocks.push(
     texture: 'cobblestone',
     surface: 'cobblestone',
     thickness: 0.7,
+    // Railings both sides. This walk is a 0.7-thick slab two units above a
+    // river, on piers, and from a marble's eye the slab's own edge and the
+    // water beyond it land on the same line: without these the only thing
+    // separating the path from the drop is a change of texture. The second arc
+    // already had its outer rail; this one had neither.
+    outerWall: 0.4,
+    innerWall: 0.4,
   }),
   // Wet from the fountain spray: a third of the grip, and the reversal in the
   // curve arrives right as the surface changes.
@@ -142,6 +156,11 @@ blocks.push(
     surface: 'tarmac',
     thickness: 0.7,
     outerWall: 0.4,
+    // The inner rail ends where the sweep does, which is the tangent point at
+    // 110 degrees. Three units in from the tangent it stands at radius 15 from
+    // the fountain — inside the ring's own inner edge, so it marks the drop
+    // without standing in the mouth of the ring.
+    innerWall: 0.4,
   }),
 );
 
@@ -167,10 +186,21 @@ entities.push(
 // ---------------------------------------------------------------- the fountain
 
 // The basin. A real floor, not a pit: landing in it is a five-second wade, and
-// that asymmetry is what makes the outer edge frightening by comparison.
+// that asymmetry is what makes the outer edge frightening by comparison. It
+// only works if the player can see which of the two is which, and it used to be
+// built out of the same water plane as the river with the same texture and
+// nearly the same colour, a unit apart. So the floor of the basin is now what a
+// fountain floor actually is — pale tile, dry-looking, plainly a made thing —
+// and the water in it is a separate skin laid over the top, thin enough to read
+// as ankle-deep.
 blocks.push(
   { kind: 'cylinder', pos: [0, BASIN_Y - 0.3, 0], radius: 16, height: 0.6, segments: 40,
-    texture: 'water', surface: 'water', color: '#7fa3ad' },
+    texture: 'sandstone', surface: 'water', color: '#b9c9c4' },
+  // The basin floor's top face is at -1, so the skin sits from there up: a
+  // twelve-hundredths-of-a-unit film, which is what ankle-deep looks like
+  // against a marble 0.4 across.
+  { kind: 'cylinder', pos: [0, BASIN_Y + 0.06, 0], radius: 15.4, height: 0.12, segments: 40,
+    texture: 'water', surface: 'water', noCollide: true, color: '#8fc4cf' },
 );
 
 // The walking ring. Banked 14 degrees over the half that matters — the western
@@ -280,7 +310,7 @@ entities.push(
 // ------------------------------------------------------------- distant scenery
 // Downtown sits east, behind the start, so the marble runs away from the city
 // and out into the rivers.
-blocks.push(...downtownSkyline([150, -6, 10], 95, 11));
+blocks.push(...downtownSkyline([230, -6, 10], 55, 11));
 
 export const pointLevel: LevelDef = {
   id: 'point',

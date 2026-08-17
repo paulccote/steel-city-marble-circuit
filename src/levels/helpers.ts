@@ -34,17 +34,136 @@ export function deck(
   width: number,
   texture: TextureName = 'concrete',
   surface: SurfaceName = 'default',
-  kerb = true,
+  withKerb = true,
 ): Block[] {
   const out: Block[] = [
     box(center, [length, 0.6, width], texture, surface),
   ];
-  if (kerb) {
-    const y = center[1] + 0.45;
+  if (withKerb) {
+    const y = center[1] + 0.3;
+    const x0 = center[0] - length / 2;
+    const x1 = center[0] + length / 2;
+    for (const dz of [-width / 2 + 0.15, width / 2 - 0.15]) {
+      out.push(...kerb([x0, y, center[2] + dz], [x1, y, center[2] + dz]));
+    }
+  }
+  return out;
+}
+
+/**
+ * A kerb along one straight edge, drawn twice.
+ *
+ * A platform rim that just stops is found by falling off it. Marble Blast's
+ * rims read at speed because there are two marks on them: a raised lip the eye
+ * catches in silhouette, and a darker band under it the eye catches when the
+ * lip is edge-on and invisible. This draws both from the two endpoints of the
+ * edge, so a sloped edge gets a sloped kerb.
+ *
+ * 0.3 is the tallest lip a 0.2-radius marble cannot climb, which makes this a
+ * wall for anything rolling *along* the deck and a full stop for anything
+ * crossing it. So it goes on edges that run with the route, never across one —
+ * for the edges you are meant to leave, see `dropLip`.
+ */
+export function kerb(
+  from: Vec3,
+  to: Vec3,
+  opts: {
+    height?: number;
+    /** Kerb thickness across the edge. */
+    width?: number;
+    texture?: TextureName;
+    color?: string;
+    /** Set false where a lip would block a landing; the band still draws. */
+    solid?: boolean;
+    /** Painted band on the deck under the lip. */
+    band?: boolean;
+    bandColor?: string;
+  } = {},
+): Block[] {
+  const h = opts.height ?? 0.3;
+  const w = opts.width ?? 0.3;
+  const dx = to[0] - from[0];
+  const dz = to[2] - from[2];
+  const rise = to[1] - from[1];
+  const run = Math.hypot(dx, dz);
+  const len = Math.hypot(run, rise);
+  const yaw = Math.atan2(-dz, dx);
+  const pitch = Math.atan2(rise, run);
+  const mid: Vec3 = [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2, (from[2] + to[2]) / 2];
+  const out: Block[] = [];
+  if (opts.solid !== false) {
     out.push(
-      box([center[0], y, center[2] - width / 2 + 0.15], [length, 0.3, 0.3], 'steel', 'default'),
-      box([center[0], y, center[2] + width / 2 - 0.15], [length, 0.3, 0.3], 'steel', 'default'),
+      box([mid[0], mid[1] + h / 2, mid[2]], [len, h, w], opts.texture ?? 'steel', 'default', {
+        rot: [0, yaw, pitch],
+        color: opts.color,
+      }),
     );
+  }
+  if (opts.band !== false) {
+    // Sits 0.05 proud of the deck and straddles the rim, so half of it hangs
+    // over the drop and darkens the corner the marble is about to reach.
+    out.push(
+      box([mid[0], mid[1] + 0.05, mid[2]], [len, 0.1, 0.62], opts.texture ?? 'steel', 'default', {
+        rot: [0, yaw, pitch],
+        noCollide: true,
+        color: opts.bandColor ?? '#2c3037',
+      }),
+    );
+  }
+  return out;
+}
+
+/**
+ * The other kind of edge: one the player is meant to go off. A kerb here would
+ * be a trap, so the mark is paint plus two chevron boards standing clear of the
+ * racing line — the same language a real road uses at a bridge lift, and read
+ * from far enough back that there is still time to act on it.
+ */
+export function dropLip(
+  edge: Vec3,
+  span: number,
+  opts: { yaw?: number; boards?: boolean; color?: string } = {},
+): Block[] {
+  const yaw = opts.yaw ?? 0;
+  const color = opts.color ?? '#efd23c';
+  const c = Math.cos(yaw);
+  const s = Math.sin(yaw);
+  // Local frame: the route runs along +X, the lip spans Z.
+  // Everything here sits *on* the deck, so the paint is offset half its own
+  // thickness above it rather than centred on it and half buried.
+  const at = (lx: number, ly: number, lz: number): Vec3 => [
+    edge[0] + lx * c + lz * s,
+    edge[1] + ly,
+    edge[2] - lx * s + lz * c,
+  ];
+  const out: Block[] = [
+    // Hazard banding across the last unit and a half of deck. Dark on the
+    // outside, yellow inboard of it: the decks these go on are gold steel and
+    // pale concrete, and against both of those it is the dark band that carries
+    // the edge — the yellow only says which kind of edge it is.
+    box(at(-0.35, 0.05, 0), [0.7, 0.1, span], 'steelPainted', 'default', {
+      rot: [0, yaw, 0],
+      noCollide: true,
+      color: '#22262c',
+    }),
+    box(at(-0.95, 0.05, 0), [0.5, 0.1, span], 'steelPainted', 'default', {
+      rot: [0, yaw, 0],
+      noCollide: true,
+      color,
+    }),
+  ];
+  if (opts.boards !== false) {
+    // Outboard of the lane and 1.6 tall: tall enough to break the horizon from
+    // a marble's eye, narrow enough not to hide the landing beyond it.
+    for (const lz of [-span / 2 - 0.5, span / 2 + 0.5]) {
+      out.push(
+        box(at(-0.6, 0.8, lz), [0.35, 1.6, 1.2], 'steelPainted', 'default', {
+          rot: [0, yaw, 0],
+          noCollide: true,
+          color,
+        }),
+      );
+    }
   }
   return out;
 }
@@ -53,6 +172,14 @@ export function deck(
  * A distant, non-colliding skyline. Pittsburgh reads instantly from its
  * silhouette — a cluster of towers in the point between two rivers — so every
  * level places one on the horizon for orientation.
+ *
+ * Towers land between 0.75 and 1.2 of `radius` from the centre, so the cluster
+ * is nearly two and a half radii across and the caller has to keep all of that
+ * off the course. Placed by eye it did not: a 55-unit glass tower stood in the
+ * middle of the Station Square plaza, no collision, full apparent solidity, and
+ * no way for a player to tell which of the two blocks in front of them was the
+ * real one. Nothing in here is walkable, so nothing in here belongs within
+ * about fifty units of anything that is.
  */
 export function downtownSkyline(center: Vec3, radius: number, seed = 1): Block[] {
   const out: Block[] = [];
@@ -119,6 +246,13 @@ export function trussBridge(
   const out: Block[] = [];
   const [x, y, z] = start;
   out.push(box([x + length / 2, y, z], [length, 0.5, width], texture, 'steel'));
+
+  // The truss itself is all decoration, so without these the deck is an
+  // unmarked plank with a drop either side of it. The kerb rides on the deck
+  // top, at y + half the deck's 0.5 thickness.
+  for (const dz of [-width / 2 + 0.15, width / 2 - 0.15]) {
+    out.push(...kerb([x, y + 0.25, z + dz], [x + length, y + 0.25, z + dz], { color: '#5b6470' }));
+  }
 
   const trussHeight = 3.4;
   for (const side of [-1, 1]) {

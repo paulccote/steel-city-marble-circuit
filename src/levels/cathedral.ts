@@ -1,5 +1,5 @@
 import type { Block, Entity, LevelDef, Vec3 } from '../game/types';
-import { box, deg, downtownSkyline, gemLine, lampRow, portalGate, slopeDeck, stairFlight } from './helpers';
+import { box, deg, downtownSkyline, gemLine, kerb, lampRow, portalGate, slopeDeck, stairFlight } from './helpers';
 
 /**
  * Level 4 — The Cathedral of Learning.
@@ -38,6 +38,13 @@ blocks.push(
   // Bigelow Boulevard along the west edge, a step below the lawn. Past its far
   // kerb there is nothing, and that kerb is the only fatal edge on the map.
   box([-80, -1.5, 0], [12, 1, 130], 'asphalt', 'tarmac'),
+);
+// It was described as a kerb and built as nothing: eighty units of asphalt
+// simply ending, with the same fog beyond it as beside it. Paint only, no lip —
+// the level says this edge is fatal, so it stays fatal and starts being legible.
+blocks.push(
+  ...kerb([-85.7, -1, -65], [-85.7, -1, 65], { solid: false, bandColor: '#1e2126' }),
+  ...kerb([-84.9, -1, -65], [-84.9, -1, 65], { solid: false, bandColor: '#d8c24a' }),
 );
 
 // The Fifth Avenue terrace, a step above the lawn. Small, but it means the
@@ -98,8 +105,10 @@ blocks.push(...lampRow([-52, 0, 7.6], [1, 0, 0], 5, 9));
 
 entities.push(
   { kind: 'startPad', pos: [-70, 1.5, 0] },
-  ...gemLine([-54, 0.6, 4], [-46, 0.6, -4], 2),
-  { kind: 'gem', pos: [-38, 0.6, 3] },
+  // 0.75 above the flagged walk, whose surface is at 0.2. At 0.6 the gem sat
+  // 0.4 clear, and 0.4 is less than the 0.43 its own point plus its bob needs.
+  ...gemLine([-54, 0.75, 4], [-46, 0.75, -4], 2),
+  { kind: 'gem', pos: [-38, 0.75, 3] },
 );
 
 // ------------------------------------------------------------- the base block
@@ -140,7 +149,10 @@ for (const z of [-4.4, 4.4]) {
 entities.push(
   { kind: 'gem', pos: [-29, 3.2, 0] },
   { kind: 'gem', pos: [-20, 7.2, 0] },
-  { kind: 'gem', pos: [-9.5, TERRACE_Y + 0.5, -6] },
+  // On the corner pad the spiral starts from, not at (-9.5, -6): that point is
+  // inside the first ledge run, which is pinned to the shaft's west face and
+  // climbs straight through it. Only the top third of the gem showed.
+  { kind: 'gem', pos: [-9.5, TERRACE_Y + 0.55, -10.4] },
 );
 
 // ---------------------------------------------------------------- the shaft
@@ -173,6 +185,13 @@ const corners: Vec3[] = [
   [CORNER, TERRACE_Y, -CORNER],
 ];
 
+/**
+ * Trim for every ledge rim on the tower. Paint, never a lip: this level is
+ * forty units of deliberate exposure and a kerb would quietly delete it. The
+ * job is to make the edge visible, not to make it safe.
+ */
+const LEDGE_TRIM = { solid: false, bandColor: '#4b4034' } as const;
+
 /** Ledge widths per run: the spiral narrows as the exposure grows. */
 const RUN_W = [3.5, 3.5, 2.8, 2.8, 2.2, 2.2];
 const RUN_RISE = 4;
@@ -199,6 +218,20 @@ for (let i = 0; i < RUN_W.length; i++) {
 
   // Corner pad at the foot of the run.
   blocks.push(box([a[0], level - 0.25, a[2]], [3.6, 0.5, 3.6], 'sandstone', 'cobblestone', { color: STONE }));
+  // And a dark trim round its two outer sides, for the same reason as the runs.
+  blocks.push(
+    ...kerb([a[0] + Math.sign(a[0]) * 1.8, level, a[2] - 1.8], [a[0] + Math.sign(a[0]) * 1.8, level, a[2] + 1.8], LEDGE_TRIM),
+    ...kerb([a[0] - 1.8, level, a[2] + Math.sign(a[2]) * 1.8], [a[0] + 1.8, level, a[2] + Math.sign(a[2]) * 1.8], LEDGE_TRIM),
+  );
+
+  // The outer rim of the run, in the same trim. A ledge two units wide, cut
+  // from the same stone as the wall it is bolted to and photographed against a
+  // night sky, has no edge at all until something dark is painted on it: the
+  // shaft, the ledge and the drop are all one colour otherwise.
+  const rim = (p: Vec3): Vec3 =>
+    a[0] === b[0]
+      ? [Math.sign(a[0]) * (SHAFT + w - 0.15), p[1], p[2]]
+      : [p[0], p[1], Math.sign(a[2]) * (SHAFT + w - 0.15)];
 
   if (i === 2 || i === 3) {
     // Runs three and four are broken. The gap is 3.5 units, measured against
@@ -213,10 +246,15 @@ for (let i = 0; i < RUN_W.length; i++) {
     blocks.push(
       slopeDeck(from, at(t0), w, 0.5, 'sandstone', 'cobblestone', { color: STONE }),
       slopeDeck(at(t1), to, w, 0.5, 'sandstone', 'cobblestone', { color: STONE }),
+      ...kerb(rim(from), rim(at(t0)), LEDGE_TRIM),
+      ...kerb(rim(at(t1)), rim(to), LEDGE_TRIM),
     );
     entities.push({ kind: 'gem', pos: [(at(t0)[0] + at(t1)[0]) / 2, (at(t0)[1] + at(t1)[1]) / 2 + 1.1, (at(t0)[2] + at(t1)[2]) / 2] });
   } else {
-    blocks.push(slopeDeck(from, to, w, 0.5, 'sandstone', 'cobblestone', { color: STONE }));
+    blocks.push(
+      slopeDeck(from, to, w, 0.5, 'sandstone', 'cobblestone', { color: STONE }),
+      ...kerb(rim(from), rim(to), LEDGE_TRIM),
+    );
     entities.push({
       kind: 'gem',
       pos: [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2 + 0.55, (from[2] + to[2]) / 2],
@@ -228,6 +266,11 @@ for (let i = 0; i < RUN_W.length; i++) {
 blocks.push(box([CORNER, ROOF_Y - 0.25, CORNER], [3.6, 0.5, 3.6], 'sandstone', 'cobblestone', { color: STONE }));
 blocks.push(
   slopeDeck([CORNER, ROOF_Y, CORNER], [SHAFT - 1, ROOF_Y, SHAFT - 1], 3, 0.5, 'sandstone', 'cobblestone', { color: STONE }),
+  // Trim down both sides of the diagonal. It runs at 45 degrees to everything
+  // else on the roof, which is exactly when an untrimmed 3-unit slab stops
+  // reading as a route and starts reading as part of the roof.
+  ...kerb([CORNER + 1.05, ROOF_Y, CORNER - 1.05], [SHAFT - 1 + 1.05, ROOF_Y, SHAFT - 1 - 1.05], LEDGE_TRIM),
+  ...kerb([CORNER - 1.05, ROOF_Y, CORNER + 1.05], [SHAFT - 1 - 1.05, ROOF_Y, SHAFT - 1 + 1.05], LEDGE_TRIM),
 );
 
 // ------------------------------------------------------------ beat 3: the crown
@@ -247,8 +290,12 @@ for (let i = 0; i < 7; i++) {
       color: '#d8cdb2',
     }),
   );
-  if (i % 2 === 0) {
-    entities.push({ kind: 'gem', pos: [Math.cos(ang) * r, y + 0.5, Math.sin(ang) * r] });
+  // No gem on the last stone: by then the spiral has wound in to a radius of
+  // 1.4 and the mast's 4.4-square cap covers it, so that gem was inside solid
+  // stone. The finish gem on top of the mast is two thirds of a unit above it
+  // and does the same job.
+  if (i % 2 === 0 && i < 6) {
+    entities.push({ kind: 'gem', pos: [Math.cos(ang) * r, y + 0.55, Math.sin(ang) * r] });
   }
   const next = r - 1.1;
   // The turn that puts the next stone exactly one chord away. As the spiral
@@ -279,7 +326,7 @@ blocks.push(
   box([34, 18, 32], [5, 8, 5], 'sandstone', 'default', { noCollide: true, color: '#b8ac95' }),
   box([34, 27, 32], [2.4, 12, 2.4], 'sandstone', 'default', { noCollide: true, color: '#a89c86' }),
 );
-blocks.push(...downtownSkyline([-250, -10, 0], 100, 3));
+blocks.push(...downtownSkyline([-245, -10, 10], 55, 3));
 
 export const cathedralLevel: LevelDef = {
   id: 'cathedral',

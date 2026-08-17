@@ -1,5 +1,5 @@
 import type { Block, Entity, LevelDef, Vec3 } from '../game/types';
-import { arcWalk, box, deg, portalGate, slopeDeck } from './helpers';
+import { arcWalk, box, deg, dropLip, kerb, portalGate, slopeDeck } from './helpers';
 
 /**
  * Level 5 — The Jack Rabbit.
@@ -141,7 +141,11 @@ for (let i = 0; i < 4; i++) {
 entities.push({ kind: 'startPad', pos: [-12, 0, 0] });
 // The ravine is the one place a mistake costs the whole ride. A checkpoint on
 // the run into it makes the jump a test rather than a punishment.
-entities.push({ kind: 'checkpoint', pos: [108, 0, 0] });
+// Y of 0.35, not 0. The valley is a V between two sloped decks, and a 0.2
+// marble cannot reach the vertex — it rests 0.45 up, wedged between the two
+// faces. Respawning is `pos` plus one radius, so at zero the player came back
+// inside the track and had to be squeezed out of it.
+entities.push({ kind: 'checkpoint', pos: [108, 0.35, 0] });
 
 // --------------------------------------------------------------------- gems
 // Crest gems sit on the crest itself. It is tempting to hang them out in the
@@ -169,12 +173,13 @@ entities.push(
 // ---------------------------------------------------------------- the ravine
 // The rails stop at the lip and there is a chevron across it. Below is the
 // hillside the Jack Rabbit was actually built into, and then the Mon.
-blocks.push(
-  box([161.6, 1.9, 0], [0.4, 1.6, TRACK_W], 'steelPainted', 'default', {
-    color: '#efd23c',
-    noCollide: true,
-  }),
-);
+// The warning used to be one board the full six units across the track, 1.6
+// tall and standing straight up at the launch lip. Non-colliding, and it read
+// as a wall: the one thing the player must do here is arrive at fifteen metres
+// a second and go straight through it. Now it is two boards on the rails with
+// the lane open between them, plus paint on the planking — which is the surface
+// the player is actually looking at on the way in.
+blocks.push(...dropLip([162, 1, 0], TRACK_W - 1));
 entities.push({ kind: 'gem', pos: [167, 1.9, 0] });
 
 for (const side of [-1, 1]) {
@@ -266,6 +271,17 @@ for (let i = 0; i < 22; i++) {
 // The arrow sign over the entrance, and something for it to stand on.
 blocks.push(
   box([-29.5, -0.5, 0], [27, 1, 20], 'asphalt', 'tarmac'),
+  // Kerbs round the three open sides of it. The midway is behind the start pad,
+  // so a player only meets these edges by wandering — but this is the one place
+  // in the level where the ground is twenty units wide and its edge is a
+  // twenty-unit drop into fog, and nothing at all was drawn on it.
+  ...kerb([-43, 0, -9.85], [-16, 0, -9.85], { color: '#4e5b63' }),
+  ...kerb([-43, 0, 9.85], [-16, 0, 9.85], { color: '#4e5b63' }),
+  ...kerb([-42.85, 0, -10], [-42.85, 0, 10], { color: '#4e5b63' }),
+  // And across the two corners the midway leaves when it narrows to the six
+  // units of track at x = -16.
+  ...kerb([-16.15, 0, -10], [-16.15, 0, -3.1], { color: '#4e5b63' }),
+  ...kerb([-16.15, 0, 3.1], [-16.15, 0, 10], { color: '#4e5b63' }),
   box([-30, 8, 9], [1.2, 16, 1.2], 'steel', 'default', { noCollide: true, color: '#c8ccd2' }),
   box([-30, 15, 9], [1.6, 3.2, 14], 'steelPainted', 'default', { noCollide: true, color: '#d43a2f' }),
   box([-30, 15, 17.4], [1.6, 5.4, 5.4], 'steelPainted', 'default', {

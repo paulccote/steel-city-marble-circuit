@@ -417,24 +417,53 @@ function drawSurface(name: TextureName, size: number, mode: Mode): HTMLCanvasEle
     }
 
     case 'water': {
-      const g = ctx.createLinearGradient(0, 0, 0, size);
-      g.addColorStop(0, C('#2a7fa0', '#909090'));
-      g.addColorStop(1, C('#14556e', '#707070'));
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, size, size);
-      ctx.globalAlpha = 0.2;
-      ctx.strokeStyle = C('#bfeaf7', '#ffffff');
-      for (let i = 0; i < 140; i++) {
-        ctx.lineWidth = (1 + rng() * 2) * S;
-        ctx.beginPath();
-        const y = rng() * size;
-        ctx.moveTo(0, y);
-        for (let x = 0; x <= size; x += 16 * S) {
-          ctx.lineTo(x, y + Math.sin(x * 0.025 + i) * 4 * S);
+      // Two crossed sets of crests rather than one. A single set of parallel
+      // streaks on a ground plane all converge on the vanishing point, and a
+      // surface whose lines converge reads as a wall you are looking down —
+      // which is exactly what the river under the bridge was doing.
+      //
+      // Drawn per pixel from wrapping sines: the old version had a top-to-
+      // bottom gradient, which cannot wrap, so every tile boundary showed as a
+      // hard step across the middle of the river.
+      const img = ctx.getImageData(0, 0, size, size);
+      // The albedo barely moves. Water has one colour; what varies over it is
+      // the light it throws back, and that comes from the normal map and the
+      // Fresnel in builder.ts. Painting the waves into the colour instead gave
+      // a two-tone mottle that read as mud under a warm sun — and levels tint
+      // this plane to their own river, so a dark base comes out as tar.
+      const deep = new THREE.Color(C('#2a6d88', '#000000'));
+      const crest = new THREE.Color(C('#3d849f', '#ffffff'));
+      const TAU = Math.PI * 2;
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const u = x / size;
+          const v = y / size;
+          // Long swell along one axis, shorter chop across it, and a fine
+          // third set at an angle so no direction dominates for long.
+          let h =
+            Math.sin(TAU * (3 * u + Math.sin(TAU * 2 * v) * 0.07)) * 0.38 +
+            Math.sin(TAU * (5 * v + Math.sin(TAU * 3 * u) * 0.08)) * 0.28 +
+            Math.sin(TAU * (7 * u + 4 * v)) * 0.19 +
+            Math.sin(TAU * (11 * v - 6 * u)) * 0.15;
+          h = Math.max(0, Math.min(1, h * 0.5 + 0.5));
+          const i = (y * size + x) * 4;
+          if (mode === 'albedo') {
+            // Crests catch the sky and troughs go to the river's own colour;
+            // the sharpening keeps the bright edge thin, the way a wave does.
+            const t = Math.pow(h, 1.7);
+            img.data[i] = clamp255((deep.r + (crest.r - deep.r) * t) * 255);
+            img.data[i + 1] = clamp255((deep.g + (crest.g - deep.g) * t) * 255);
+            img.data[i + 2] = clamp255((deep.b + (crest.b - deep.b) * t) * 255);
+          } else {
+            const g2 = clamp255(h * 255);
+            img.data[i] = g2;
+            img.data[i + 1] = g2;
+            img.data[i + 2] = g2;
+          }
+          img.data[i + 3] = 255;
         }
-        ctx.stroke();
       }
-      ctx.globalAlpha = 1;
+      ctx.putImageData(img, 0, 0);
       break;
     }
 
@@ -666,6 +695,8 @@ function drawMacro(kind: MacroKind): HTMLCanvasElement {
   const n8 = periodicNoise(seed ^ 0x9e37, 8);
   const n16 = periodicNoise(seed ^ 0x2545, 16);
   const img = ctx.createImageData(size, size);
+  const field = new Float32Array(size * size);
+  const tints = new Float32Array(size * size);
 
   // A soft line at `at`, measured the short way round the tile so it wraps.
   const ridge = (v: number, at: number, width: number) => {
@@ -696,18 +727,23 @@ function drawMacro(kind: MacroKind): HTMLCanvasElement {
           const bu = wu * 3;
           const bv = wv * 3;
           const bay = Math.floor(bu) * 7 + Math.floor(bv) * 13;
-          t *= 0.94 + (Math.abs(bay * 2654435761) % 97) / 97 * 0.14;
+          t *= 0.9 + (Math.abs(bay * 2654435761) % 97) / 97 * 0.2;
+          // Wide, because narrow is invisible: the ground is seen at a grazing
+          // angle, where a pixel's footprint covers a metre or more of it and
+          // anything thinner than that is averaged out by the mip chain long
+          // before it reaches the screen. Everything here is a metre across at
+          // the least.
           const joint = (f: number) => {
             const d = Math.min(f - Math.floor(f), 1 - (f - Math.floor(f)));
-            return Math.exp(-(d * d) / 0.0009);
+            return Math.exp(-(d * d) / 0.012);
           };
-          t -= 0.26 * Math.max(joint(bu), joint(bv));
+          t -= 0.42 * Math.max(joint(bu), joint(bv));
           // A patched repair: flatter and lighter than what is around it.
           if (n2(u, v) > 0.66) t = t * 0.45 + 0.34 + (fbm - 0.5) * 0.1;
           // Two drainage falls, crossing.
-          t -= 0.3 * ridge(wv, 0.46, 0.028) + 0.24 * ridge(wu, 0.19, 0.022);
+          t -= 0.42 * ridge(wv, 0.46, 0.055) + 0.32 * ridge(wu, 0.19, 0.045);
           // The wear path down the middle of the traffic: polished lighter.
-          t += 0.16 * ridge(wv + (n2(u, v) - 0.5) * 0.14, 0.78, 0.09);
+          t += 0.16 * ridge(wv + (n2(u, v) - 0.5) * 0.14, 0.78, 0.12);
           warm = 1 + (n8(u + 0.5, v) - 0.5) * 0.06;
           break;
         }
@@ -746,13 +782,27 @@ function drawMacro(kind: MacroKind): HTMLCanvasElement {
         }
       }
 
-      t = Math.max(0.24, Math.min(0.86, t));
-      const i = (y * size + x) * 4;
-      img.data[i] = clamp255(t * warm * 255);
-      img.data[i + 1] = clamp255(t * 255);
-      img.data[i + 2] = clamp255((t * (2 - warm)) * 255);
-      img.data[i + 3] = 255;
+      // Asymmetric on purpose. The key light puts a lit surface close to
+      // clipping, so anything the macro map brightens is thrown away by the
+      // display, and only what it darkens survives to be seen.
+      field[y * size + x] = Math.max(0.15, Math.min(0.78, t));
+      tints[y * size + x] = warm;
     }
+  }
+
+  // Recentre on mid grey. The shader treats 0.5 as identity, so a field that
+  // averages anything else would quietly darken or lift every surface it is
+  // applied to — and the tone of these surfaces was tuned without it.
+  let mean = 0;
+  for (const f of field) mean += f;
+  mean /= field.length;
+  for (let i = 0; i < field.length; i++) {
+    const t = Math.max(0.1, Math.min(0.95, field[i] + (0.5 - mean)));
+    const warm = tints[i];
+    img.data[i * 4] = clamp255(t * warm * 255);
+    img.data[i * 4 + 1] = clamp255(t * 255);
+    img.data[i * 4 + 2] = clamp255(t * (2 - warm) * 255);
+    img.data[i * 4 + 3] = 255;
   }
   ctx.putImageData(img, 0, 0);
   return canvas;
@@ -801,8 +851,13 @@ function normalFromHeight(height: HTMLCanvasElement, strength: number): HTMLCanv
   return canvas;
 }
 
-/** Surfaces with no relief worth faking; a normal map on these is wasted work. */
-const FLAT: ReadonlySet<TextureName> = new Set<TextureName>(['water', 'glass', 'ice', 'yellowRamp']);
+/**
+ * Surfaces with no relief worth faking; a normal map on these is wasted work.
+ * Water is not among them any more: a mirror-flat plane reflects one uniform
+ * sky and answers the key light nowhere, which is why the river had no
+ * highlight and read as painted card.
+ */
+const FLAT: ReadonlySet<TextureName> = new Set<TextureName>(['glass', 'ice', 'yellowRamp']);
 
 /** How much the derived normal map bends the light, per surface. */
 const NORMAL_STRENGTH: Partial<Record<TextureName, number>> = {
@@ -817,6 +872,7 @@ const NORMAL_STRENGTH: Partial<Record<TextureName, number>> = {
   rust: 1.0,
   grass: 0.9,
   incline: 0.9,
+  water: 1.5,
 };
 
 function finish(tex: THREE.Texture, srgb: boolean) {
