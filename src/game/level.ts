@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { LevelDef, MoverEntity, PowerupType, Vec3 } from './types';
 import { buildBlocks, setBackdropFog } from './builder';
 import {
+  getContactShadowTexture,
   getGlowTexture,
   getTexture,
   makeEnvMap,
@@ -297,27 +298,73 @@ export class Level {
       metalness: 0.1,
       clearcoat: 1,
       clearcoatRoughness: 0.02,
-      envMapIntensity: 2.6,
-      emissive: 0x1b4c78,
-      emissiveIntensity: 0.22,
+      // Down from 2.6. The environment here is one smooth sky gradient, so at
+      // that strength it laid an even pale wash over the whole ball and buried
+      // the swirl underneath it. At 2.0 the sun still lands as a hard hot spot
+      // and the cobalt ribbon keeps its own colour.
+      envMapIntensity: 2.0,
+      // Self-light, and more of it than a physical material would carry. The
+      // measurement that forced this: the Point's plaza renders at 115 and a
+      // pure white diffuse surface standing on it renders at about 150, because
+      // the key light and the sky are all there is. Thirty-five levels is not
+      // enough separation for the one object that has to be found in every
+      // frame, and no amount of albedo can buy more of it — the ceiling is the
+      // lighting, not the paint. Lifting the marble's own floor is the only
+      // lever left, and it is aimed at the shaded underside, which is the part
+      // that was sinking into the ground behind it.
+      emissive: 0x7fb0e0,
+      emissiveIntensity: 0.28,
     });
     this.marbleMesh = new THREE.Mesh(geo, mat);
     this.marbleMesh.castShadow = true;
     this.scene.add(this.marbleMesh);
 
-    // A tight rim shell. Marble Blast's marble has a dark, definite edge; a
-    // lit sphere alone dissolves into whatever is behind it.
+    // The rim shell, the other half of the readability pair. The body is taken
+    // as light as the sun allows so that it beats the floors below 160; this is
+    // what beats the ones above. Near-black rather than the old navy — navy is
+    // a value, and a value can be matched by a floor, whereas the darkest thing
+    // in any of these frames is still forty levels above this.
+    //
+    // Sized off the rendered frame: the marble is about 43 pixels of radius at
+    // the chase camera's distance, so 7.5% is a three-pixel line — enough to
+    // survive the mip chain at range, thin enough not to fatten the ball.
     const rim = new THREE.Mesh(
       geo,
+      new THREE.MeshBasicMaterial({ color: 0x05090f, side: THREE.BackSide, fog: false }),
+    );
+    rim.scale.setScalar(1.075);
+    this.marbleMesh.add(rim);
+
+    // The contact shadow, kept out of the marble's own transform because it has
+    // to lie on the ground while the ball spins. Turned to face +Y in its own
+    // space, so the quaternion that lays it on a slope is just up-to-normal.
+    const disc = new THREE.CircleGeometry(MARBLE.radius * 2.1, 28);
+    disc.rotateX(-Math.PI / 2);
+    this.contactShadow = new THREE.Mesh(
+      disc,
       new THREE.MeshBasicMaterial({
-        color: 0x0b2036,
-        side: THREE.BackSide,
+        map: getContactShadowTexture(),
+        color: 0x05070c,
+        transparent: true,
+        opacity: 0.62,
+        depthWrite: false,
         fog: false,
+        // The floor it sits on is coplanar with it, so without an offset this
+        // is a coin toss per fragment.
+        polygonOffset: true,
+        polygonOffsetFactor: -3,
+        polygonOffsetUnits: -6,
       }),
     );
-    rim.scale.setScalar(1.045);
-    this.marbleMesh.add(rim);
+    this.contactShadow.renderOrder = 1;
+    this.scene.add(this.contactShadow);
   }
+
+  private contactShadow!: THREE.Mesh;
+  /** The last surface the marble touched, so a jump keeps its shadow. */
+  private shadowPlane = new THREE.Vector3();
+  private shadowNormal = new THREE.Vector3(0, 1, 0);
+  private shadowScratch = new THREE.Vector3();
 
   private buildEntities() {
     for (const e of this.def.entities) {
@@ -595,6 +642,7 @@ export class Level {
     if (playable && this.marble.position.y < this.killY) this.die();
   }
 
+  /** Both of the things that have to follow the marble every frame. */
   private updateSun() {
     // Keep the shadow frustum centred on the marble; a level-sized frustum
     // would blur every shadow into uselessness.
@@ -604,6 +652,34 @@ export class Level {
       .normalize()
       .multiplyScalar(80)
       .add(this.marble.position);
+
+    const p = this.marble.position;
+    const r = this.marble.radius;
+    if (this.marble.onGround) {
+      // Laid on the surface it is actually touching rather than on the
+      // horizontal: a flat disc under a marble on one of the Incline's ramps
+      // reads as a coin floating over it.
+      this.shadowNormal.copy(this.marble.groundNormal);
+      this.shadowPlane.copy(p).addScaledVector(this.shadowNormal, -r);
+    }
+    // In the air, the shadow stays on the last surface and the marble rises
+    // away from it — which is the whole reason to have one: the height of a
+    // jump is unreadable without something on the ground to measure it from.
+    // It grows and fades over five radii, roughly one hop, by which point the
+    // marble is being read against the sky rather than against the floor.
+    const rise = Math.max(
+      0,
+      this.shadowScratch.subVectors(p, this.shadowPlane).dot(this.shadowNormal),
+    );
+    const lift = Math.min(1, rise / (r * 5));
+    this.contactShadow.position
+      .copy(p)
+      .addScaledVector(this.shadowNormal, -rise + 0.012);
+    this.contactShadow.quaternion.setFromUnitVectors(UP, this.shadowNormal);
+    this.contactShadow.scale.setScalar((r / MARBLE.radius) * (1 + lift * 0.55));
+    const m = this.contactShadow.material as THREE.MeshBasicMaterial;
+    m.opacity = 0.62 * (1 - lift);
+    this.contactShadow.visible = m.opacity > 0.02;
   }
 
   private physicsStep(dt: number, input: Input, playable: boolean) {

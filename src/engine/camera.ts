@@ -61,7 +61,10 @@ export class ChaseCamera {
     forward.addScaledVector(up, -forward.dot(up));
     if (forward.lengthSq() < 1e-8) forward.set(0, 0, 1);
     forward.normalize();
-    right.crossVectors(forward, up).normalize().negate();
+    // Right-handed, Y up: right is forward x up. Negating it here swapped the
+    // strafe keys, which stayed hidden because every automated drive test only
+    // ever held forward.
+    right.crossVectors(forward, up).normalize();
   }
 
   update(marblePos: THREE.Vector3, world: CollisionWorld | null, dt: number, up: THREE.Vector3) {

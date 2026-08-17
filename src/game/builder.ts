@@ -504,6 +504,26 @@ function extendMaterial(
       '#include <common>\nvarying vec3 vSurfPos;\nvarying vec3 vSurfNormal;',
     );
 
+    if (!backdrop) {
+      // Sky occlusion, by face direction alone. A horizontal face sees the
+      // whole sky, a wall sees half of it, a soffit sees almost none — and the
+      // hemisphere light and the environment map together only account for a
+      // fraction of that difference, so a platform's top and its side came out
+      // within a few levels of each other. That is the defect: with the lip and
+      // the ground beyond it both the same grey, there is nothing to say where
+      // the surface ends. This puts a hard nineteen-percent step at every
+      // horizontal-to-vertical corner in the game, which is the one edge cue
+      // that costs nothing and works on every material at once.
+      //
+      // Up-facing is left at exactly 1.0 on purpose: every surface tone in this
+      // file was measured on a floor, and those must not move.
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <map_fragment>',
+        `#include <map_fragment>
+        diffuseColor.rgb *= mix( 0.6, 1.0, smoothstep( -0.6, 0.55, vSurfNormal.y ) );`,
+      );
+    }
+
     if (macro) {
       shader.uniforms.macroMap = { value: getMacroMap(macro.kind) };
       shader.uniforms.macroScale = { value: 1 / macro.span };

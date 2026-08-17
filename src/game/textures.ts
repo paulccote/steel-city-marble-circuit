@@ -234,26 +234,67 @@ function drawSurface(name: TextureName, size: number, mode: Mode): HTMLCanvasEle
       // floor of eggs. Nine puts it at 0.22 units — just over half the
       // marble's width — and lands the tile at 256px per world unit, which is
       // 1:1 with screen pixels at the marble's depth.
+      //
+      // The layout, though, is now a course rather than a lattice. Setts on a
+      // lattice line up in both axes, and a plaza built from that is a
+      // chequerboard: every joint continues to the horizon, every cell is the
+      // same size, and the only thing that varies is a random tone per cell —
+      // which is high-frequency noise, not structure. Real Belgian block runs
+      // in courses of unequal-width stones, so the cross joints stagger and the
+      // eye is left with one legible direction to track instead of two
+      // competing ones. Widths are renormalised to fill the tile exactly, so
+      // the run still wraps.
       const n = 9;
       const cell = size / n;
       ctx.fillStyle = C('#221d18', '#1e1e1e');
       ctx.fillRect(0, 0, size, size);
-      for (let y = 0; y < n; y++) {
-        for (let x = 0; x < n; x++) {
-          const cx = x * cell + cell / 2 + (rng() - 0.5) * cell * 0.1;
-          const cy = y * cell + cell / 2 + (rng() - 0.5) * cell * 0.1;
-          // Setts are laid tight: the joint is a dark line, not a moat.
-          const hw = cell * (0.46 + rng() * 0.02);
-          const hh = cell * (0.45 + rng() * 0.02);
+      for (let row = 0; row < n; row++) {
+        const widths: number[] = [];
+        let total = 0;
+        for (let i = 0; i < n; i++) {
+          const w = 0.74 + rng() * 0.52;
+          widths.push(w);
+          total += w;
+        }
+        for (let i = 0; i < n; i++) widths[i] *= size / total;
+        const phase = rng() * size;
+        // A course is one batch of stone, so its value carries along the whole
+        // run. That is the frequency the old version was missing: per-sett
+        // random value averages to a flat field at ten metres, while a course
+        // stays a band you can still see — and a band is what tells you which
+        // way the paving, and therefore the platform, runs.
+        const courseWarm = rng() < 0.42;
+        const courseL = 0.84 + rng() * 0.3;
+        const courseHue = (rng() - 0.5) * 0.04;
+        // Every third course is laid against a wider joint. It costs nothing
+        // and it puts a mark every 0.66 units — near enough to the marble's own
+        // width to be the ruler the eye measures the floor against.
+        const jointY = row % 3 === 0 ? cell * 0.095 : cell * 0.05;
+        let x = phase;
+        for (let i = 0; i < n; i++) {
+          const w = widths[i];
+          const cx = x + w / 2;
+          const cy = row * cell + cell / 2;
+          x += w;
+          const hw = w / 2 - cell * 0.055;
+          const hh = cell / 2 - jointY;
           const round = cell * 0.16;
-          const rot = (rng() - 0.5) * 0.14;
+          const rot = (rng() - 0.5) * 0.1;
           // Pittsburgh setts are dark grey granite with warm brown ones mixed
           // through. Anything lighter than this drifts to pastel under a key
-          // light that already puts lit faces near clipping.
-          const warm = rng() < 0.4;
+          // light that already puts lit faces near clipping. Most of a course
+          // is one type, with the odd stone from the other batch — a course of
+          // one colour reads as a painted stripe, a random mix as static.
+          const warm = rng() < 0.85 ? courseWarm : !courseWarm;
+          // Deliberately narrow. Sett-to-sett value swings are the shimmer:
+          // they are a pixel or two wide at any distance worth looking at, so
+          // they never resolve into anything, they just crawl. The variety has
+          // been moved up to the course and up again to the macro map, both of
+          // which are large enough to survive the mip chain.
+          const jitter = 0.965 + rng() * 0.07;
           const base = warm
-            ? vary('#735839', (rng() - 0.5) * 0.03, 0.7 + rng() * 0.5, 0.82 + rng() * 0.3)
-            : vary('#66686b', (rng() - 0.5) * 0.05, 0.5 + rng() * 0.8, 0.82 + rng() * 0.32);
+            ? vary('#6b5236', courseHue + (rng() - 0.5) * 0.02, 0.78 + rng() * 0.24, courseL * jitter)
+            : vary('#66686b', courseHue + (rng() - 0.5) * 0.03, 0.6 + rng() * 0.4, courseL * jitter);
           // Drawn from a pre-rolled list so the colour and height passes stay
           // in step: wrapped() may run its body up to four times, and pulling
           // from the RNG inside it would desync the two.
@@ -267,9 +308,9 @@ function drawSurface(name: TextureName, size: number, mode: Mode): HTMLCanvasEle
             // Flat on top with a quick bevel at the rim: a cut sett, not a
             // pebble. The radial dome is what made these read as eggs.
             if (mode === 'albedo') {
-              bevelStone(ctx, hw, hh, cell * 0.13, base, shade(base, 1.2), shade(base, 0.5));
+              bevelStone(ctx, hw, hh, cell * 0.13, base, shade(base, 1.18), shade(base, 0.55));
               // Quarry grain, so a sett reads as stone rather than plastic.
-              ctx.globalAlpha = 0.18;
+              ctx.globalAlpha = 0.14;
               for (const [sx, sy, tone] of spots) {
                 ctx.fillStyle = tone > 0.5 ? '#ffffff' : '#000000';
                 ctx.fillRect(-hw + sx * hw * 2, -hh + sy * hh * 2, 1.8 * S, 1.8 * S);
@@ -283,25 +324,44 @@ function drawSurface(name: TextureName, size: number, mode: Mode): HTMLCanvasEle
         }
       }
       if (mode === 'albedo') blotches(ctx, size, 20, '#171310', cell * 1.1, 0.18, rng);
-      grain(14);
+      // Half the grain the setts used to carry. Per-texel noise on a surface
+      // seen mostly at a grazing angle never resolves; it only crawls through
+      // the mip chain as the camera moves.
+      grain(8);
       break;
     }
 
     case 'concrete': {
-      ctx.fillStyle = C('#c2bfb2', '#8a8a8a');
+      // A sixth darker than it was. Measured on the Incline, a sunlit concrete
+      // platform came out at 196 of 255 — within a few levels of clipping,
+      // where the joints below have no room left to read and nothing standing
+      // on it can separate from it either. Poured concrete is a mid grey; it
+      // only looked white because the key light here is hard.
+      ctx.fillStyle = C('#a6a397', '#8a8a8a');
       ctx.fillRect(0, 0, size, size);
-      blotches(ctx, size, 46, C('#9b988c', '#6d6d6d'), size * 0.16, 0.28, rng);
-      blotches(ctx, size, 22, C('#e2dfd2', '#b4b4b4'), size * 0.11, 0.24, rng);
+      blotches(ctx, size, 46, C('#848175', '#6d6d6d'), size * 0.16, 0.28, rng);
+      blotches(ctx, size, 22, C('#c4c1b6', '#b4b4b4'), size * 0.11, 0.24, rng);
       // Expansion joints: the only hard edge on an otherwise soft surface, and
-      // the thing that gives a big slab a sense of scale.
-      ctx.strokeStyle = C('#8b887c', '#3c3c3c');
-      ctx.lineWidth = 3 * S;
-      ctx.beginPath();
-      ctx.moveTo(0, size / 2);
-      ctx.lineTo(size, size / 2);
-      ctx.moveTo(size / 2, 0);
-      ctx.lineTo(size / 2, size);
-      ctx.stroke();
+      // the thing that gives a big slab a sense of scale. Two grades of them,
+      // because one was not enough — a tile is seven world units here, so a
+      // single cross put a mark every 3.6 units and the Mount Washington steps
+      // came out as an unbroken pale field with nothing in it to judge where a
+      // tread ended. The quarter joints bring that down to 1.8 units, close
+      // enough to the marble's own width to be read as a scale.
+      const joint = (w: number, at: number[], color: string) => {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = w * S;
+        ctx.beginPath();
+        for (const f of at) {
+          ctx.moveTo(0, size * f);
+          ctx.lineTo(size, size * f);
+          ctx.moveTo(size * f, 0);
+          ctx.lineTo(size * f, size);
+        }
+        ctx.stroke();
+      };
+      joint(2, [0.25, 0.75], C('#a2a094', '#5a5a5a'));
+      joint(3.5, [0.5], C('#7c7a6f', '#303030'));
       grain(16);
       break;
     }
@@ -719,15 +779,21 @@ function drawMacro(kind: MacroKind): HTMLCanvasElement {
 
       switch (kind) {
         case 'paving': {
-          t = 0.5 + (fbm - 0.5) * 0.46;
+          t = 0.5 + (fbm - 0.5) * 0.58;
           // Bays. Real paving is laid in courses about ten units across, each
           // course a slightly different batch, with a joint between them — and
           // that grid, not the stones, is what the eye uses to judge the size
           // of a plaza. Nothing at tile scale can supply it.
+          //
+          // The batch step used to be ±10%, which measured out as a field that
+          // was flat to within a couple of levels of grey over a whole plaza —
+          // present in the data, invisible on screen. Real batches of stone are
+          // further apart than that, and this is the one frequency in the whole
+          // material that is large enough to survive distance.
           const bu = wu * 3;
           const bv = wv * 3;
           const bay = Math.floor(bu) * 7 + Math.floor(bv) * 13;
-          t *= 0.9 + (Math.abs(bay * 2654435761) % 97) / 97 * 0.2;
+          t *= 0.8 + (Math.abs(bay * 2654435761) % 97) / 97 * 0.42;
           // Wide, because narrow is invisible: the ground is seen at a grazing
           // angle, where a pixel's footprint covers a metre or more of it and
           // anything thinner than that is averaged out by the mip chain long
@@ -735,15 +801,15 @@ function drawMacro(kind: MacroKind): HTMLCanvasElement {
           // the least.
           const joint = (f: number) => {
             const d = Math.min(f - Math.floor(f), 1 - (f - Math.floor(f)));
-            return Math.exp(-(d * d) / 0.012);
+            return Math.exp(-(d * d) / 0.017);
           };
-          t -= 0.42 * Math.max(joint(bu), joint(bv));
+          t -= 0.5 * Math.max(joint(bu), joint(bv));
           // A patched repair: flatter and lighter than what is around it.
           if (n2(u, v) > 0.66) t = t * 0.45 + 0.34 + (fbm - 0.5) * 0.1;
           // Two drainage falls, crossing.
           t -= 0.42 * ridge(wv, 0.46, 0.055) + 0.32 * ridge(wu, 0.19, 0.045);
           // The wear path down the middle of the traffic: polished lighter.
-          t += 0.16 * ridge(wv + (n2(u, v) - 0.5) * 0.14, 0.78, 0.12);
+          t += 0.22 * ridge(wv + (n2(u, v) - 0.5) * 0.14, 0.78, 0.12);
           warm = 1 + (n8(u + 0.5, v) - 0.5) * 0.06;
           break;
         }
@@ -956,9 +1022,27 @@ export function makeEnvMap(
 }
 
 /**
- * The marble's own skin: a swirled blue-white glass ball. It is on screen for
- * every frame of the game, so it gets its own hand-tuned texture rather than
- * a flat colour.
+ * The marble's own skin. It is on screen for every frame of the game, so it
+ * gets its own hand-tuned texture rather than a flat colour.
+ *
+ * Redrawn for contrast rather than for prettiness. Two critics measured the old
+ * one at a mean of 139 against a walkway at 120 — nineteen levels apart, in the
+ * same blue-grey family — and it disappeared.
+ *
+ * The floors of the six levels were then measured: they run from 26 (Kennywood's
+ * creosoted deck) to 196 (a sunlit concrete platform on the Incline), and most
+ * of them cluster between 80 and 160. A mid-value ball is inside that cluster
+ * wherever it goes, which is exactly what went wrong; a dark ball trades the
+ * pale floors for the dark ones. The way out is not a value at all — it is the
+ * pair. The body is taken as light as it can go without the sunlit side
+ * clipping into a featureless disc, which beats every floor below 160 outright,
+ * and the near-black rim shell in level.ts covers the handful of floors that are
+ * lighter still. Between them there is no surface in the game the marble can sit
+ * on and disappear.
+ *
+ * So: a pearl body with a deep cobalt swirl, rather than a cobalt body with a
+ * pale swirl. The swirl is what the eye tracks as the ball spins, and it has to
+ * be the dark element for the same reason the ball is the light one.
  */
 export function makeMarbleTexture(): THREE.Texture {
   const hit = cache.get('#marble');
@@ -971,19 +1055,21 @@ export function makeMarbleTexture(): THREE.Texture {
   const ctx = c.getContext('2d')!;
   const rng = makeRng(0x9e3779b9);
 
-  ctx.fillStyle = '#1d6fb8';
+  ctx.fillStyle = '#f7fbff';
   ctx.fillRect(0, 0, w, h);
 
-  // Broad bands first, then finer swirls on top: the same way a real swirled
-  // glass marble layers, and it keeps the pattern readable while spinning.
-  for (let i = 0; i < 26; i++) {
+  // Fewer, thinner bands than before, so most of the ball stays pearl. The old
+  // set covered the canvas twice over and the base colour never showed, which
+  // is how a marble ends up being one averaged value however many colours went
+  // into it.
+  for (let i = 0; i < 18; i++) {
     const y = rng() * h;
     const amp = 10 + rng() * 34;
-    const thick = 8 + rng() * 40;
+    const thick = 6 + rng() * 22;
     const light = rng();
     ctx.strokeStyle =
-      light > 0.62 ? '#ffffff' : light > 0.32 ? '#8ddcf5' : '#0d4c8c';
-    ctx.globalAlpha = 0.35 + rng() * 0.45;
+      light > 0.62 ? '#8fd6ff' : light > 0.34 ? '#1c5cb0' : light > 0.14 ? '#ffffff' : '#0a1f45';
+    ctx.globalAlpha = 0.4 + rng() * 0.45;
     ctx.lineWidth = thick;
     ctx.lineCap = 'round';
     ctx.beginPath();
@@ -994,6 +1080,22 @@ export function makeMarbleTexture(): THREE.Texture {
     }
     ctx.stroke();
   }
+  ctx.globalAlpha = 1;
+
+  // One deep cobalt ribbon wound right round the ball. Thirty unbroken pixels
+  // of it is the only feature that survives the marble being forty pixels
+  // across at the far end of a level, and it is what turns the spin into
+  // something you can see rather than a shimmer.
+  ctx.strokeStyle = '#123a86';
+  ctx.globalAlpha = 0.95;
+  ctx.lineWidth = 30;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-10, h * 0.42);
+  for (let x = 0; x <= w + 10; x += 10) {
+    ctx.lineTo(x, h * 0.42 + Math.sin((x / w) * Math.PI * 2) * h * 0.2);
+  }
+  ctx.stroke();
   ctx.globalAlpha = 1;
 
   // Bright flecks so the surface has something to catch the eye as it spins.
@@ -1014,6 +1116,40 @@ export function makeMarbleTexture(): THREE.Texture {
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 16;
   cache.set('#marble', tex);
+  return tex;
+}
+
+/**
+ * The marble's contact shadow: a soft dark disc laid on the ground under it.
+ *
+ * The sun's own shadow map already casts a shadow, but it lands wherever the
+ * sun happens to be — often behind the marble and out of frame — so it does
+ * nothing to tie the ball to the floor. This one is always directly underneath.
+ * It does two jobs at once: it stops the marble reading as a sticker floating
+ * over the paving, and it darkens the few pixels of floor that immediately
+ * surround the silhouette, which is precisely where the separation is measured.
+ *
+ * White with a falling alpha rather than a black-to-transparent gradient: the
+ * material tints it, so the same texture can serve any shade.
+ */
+export function getContactShadowTexture(): THREE.Texture {
+  const hit = cache.get('#contact');
+  if (hit) return hit;
+  const size = 128;
+  const { canvas, ctx } = makeCanvas(size);
+  const half = size / 2;
+  const g = ctx.createRadialGradient(half, half, 0, half, half, half);
+  // Nearly solid out to a third of the radius, then a long tail. A shadow with
+  // a hard edge reads as a painted disc; one that is all tail reads as grime.
+  g.addColorStop(0, 'rgba(255,255,255,1)');
+  g.addColorStop(0.34, 'rgba(255,255,255,0.92)');
+  g.addColorStop(0.62, 'rgba(255,255,255,0.42)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  cache.set('#contact', tex);
   return tex;
 }
 
