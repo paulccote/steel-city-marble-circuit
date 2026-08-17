@@ -592,8 +592,6 @@ function frame(now: number) {
   last = now;
 
   if (screen === 'playing' && level) {
-    // Let the renderer trade resolution for frame rate on slower machines.
-    settings.observeFrame(dt);
     level.handleUseInput(input);
     level.update(dt, input);
     hud.update(level, dt);
