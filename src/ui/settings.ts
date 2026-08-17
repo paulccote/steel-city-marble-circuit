@@ -22,6 +22,19 @@ export interface SettingsData {
 
 const KEY = 'kablam.settings';
 
+/**
+ * A first guess at what this machine can afford, used only until the frame
+ * timer has an opinion. Defaulting everyone to `high` meant a Retina laptop
+ * opened the game at four times the fragment cost of a 1x display and had no
+ * idea why it was crawling.
+ */
+function guessQuality(): Quality {
+  const dpr = typeof devicePixelRatio === 'number' ? devicePixelRatio : 1;
+  const px = window.innerWidth * dpr * window.innerHeight * dpr;
+  if (px > 5_000_000) return 'medium';
+  return 'high';
+}
+
 const DEFAULTS: SettingsData = {
   sensitivity: 0.35,
   invertY: false,
@@ -54,6 +67,17 @@ export class Settings {
   /** Scenes whose materials must be recompiled when the shadow flag flips. */
   private scenes: () => THREE.Scene[];
 
+  /**
+   * Extra resolution cut applied on top of the chosen quality tier, driven by
+   * measured frame time. A tier is a statement about how the game should look;
+   * this is what keeps it playable when the machine cannot afford that look.
+   * Fragment cost scales with the square of this, so small steps go a long way.
+   */
+  private adaptiveScale = 1;
+  private frameAcc = 0;
+  private frameCount = 0;
+  private sinceChange = 0;
+
   constructor(
     renderer: THREE.WebGLRenderer,
     input: Input,
@@ -64,13 +88,57 @@ export class Settings {
     this.input = input;
     this.audio = audio;
     this.scenes = scenes;
-    this.data = { ...DEFAULTS, ...load() };
+    // A stored choice is the player's; only guess for a first-time visitor.
+    const stored = load();
+    this.data = { ...DEFAULTS, quality: guessQuality(), ...stored };
   }
 
   set<K extends keyof SettingsData>(key: K, value: SettingsData[K]) {
     this.data[key] = value;
+    // A deliberate quality change deserves a clean slate: honour what was asked
+    // for, then let the measurements pull it back down again if they must.
+    if (key === 'quality') this.adaptiveScale = 1;
     save(this.data);
     this.apply();
+  }
+
+  /**
+   * Called once per rendered frame with the frame interval. Steps the render
+   * resolution down while frames are missing 60fps and back up once there is
+   * headroom, with a wide dead band so it settles instead of oscillating.
+   */
+  observeFrame(dt: number) {
+    this.frameAcc += dt;
+    this.frameCount++;
+    this.sinceChange += dt;
+    if (this.frameCount < 45) return;
+
+    const avgMs = (this.frameAcc / this.frameCount) * 1000;
+    this.frameAcc = 0;
+    this.frameCount = 0;
+    // Give a change time to take effect before judging it.
+    if (this.sinceChange < 1) return;
+
+    const before = this.adaptiveScale;
+    if (avgMs > 20) this.adaptiveScale = Math.max(0.5, this.adaptiveScale - 0.15);
+    else if (avgMs < 13.5 && this.adaptiveScale < 1) this.adaptiveScale = Math.min(1, this.adaptiveScale + 0.1);
+
+    if (this.adaptiveScale !== before) {
+      this.sinceChange = 0;
+      this.applyPixelRatio();
+    }
+  }
+
+  private applyPixelRatio() {
+    const q = QUALITY[this.data.quality];
+    const target = Math.min(devicePixelRatio, q.pixelRatio) * this.adaptiveScale;
+    // Below 0.6 the image turns to mush and the frames bought are not worth it.
+    this.renderer.setPixelRatio(Math.max(0.6, target));
+  }
+
+  /** For the settings UI, so the player can see what the game settled on. */
+  get effectiveScale() {
+    return this.adaptiveScale;
   }
 
   /** Push every setting into the engine. Safe to call at any time. */
@@ -83,7 +151,7 @@ export class Settings {
 
     const q = QUALITY[d.quality];
     const wasShadows = this.renderer.shadowMap.enabled;
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, q.pixelRatio));
+    this.applyPixelRatio();
     this.renderer.shadowMap.enabled = q.shadows;
     this.renderer.shadowMap.type = q.soft ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
 
