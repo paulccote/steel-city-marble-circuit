@@ -126,6 +126,14 @@ uiRoot.append(shell.root);
 
 settings.onApply = () => hud.setShowFps(settings.data.showFps);
 
+// ?q=low|medium|high forces a graphics tier before anything is drawn, so a
+// machine that struggles at the stored setting can still be opened straight
+// into a playable one without navigating menus first.
+{
+  const q = new URLSearchParams(location.search).get('q');
+  if (q === 'low' || q === 'medium' || q === 'high') settings.set('quality', q);
+}
+
 // ----------------------------------------------------------- pointer lock
 
 /**
@@ -656,7 +664,61 @@ void boot();
  * deterministic steps rather than at whatever rate the headless browser
  * happens to paint.
  */
+/**
+ * Reports what this machine is actually doing, because a frame-rate counter
+ * cannot tell the difference between a slow GPU, a huge backing store and a
+ * browser that simply chose to paint less often.
+ */
+async function diag(seconds = 4) {
+  const gl = renderer.getContext();
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  const intervals: number[] = [];
+  const work: number[] = [];
+  const orig = window.requestAnimationFrame;
+  window.requestAnimationFrame = function (cb: FrameRequestCallback) {
+    return orig.call(window, (t) => {
+      const a = performance.now();
+      cb(t);
+      work.push(performance.now() - a);
+    });
+  };
+  let prev = performance.now();
+  const end = prev + seconds * 1000;
+  while (performance.now() < end) {
+    await new Promise((r) => orig.call(window, () => r(null)));
+    const n = performance.now();
+    intervals.push(n - prev);
+    prev = n;
+  }
+  window.requestAnimationFrame = orig;
+
+  const stat = (a: number[]) => {
+    const s = [...a].sort((x, y) => x - y);
+    return {
+      median: +(s[Math.floor(s.length / 2)] ?? 0).toFixed(2),
+      p95: +(s[Math.floor(s.length * 0.95)] ?? 0).toFixed(2),
+      worst: +(s[s.length - 1] ?? 0).toFixed(2),
+    };
+  };
+
+  return {
+    gpu: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : 'unavailable',
+    quality: settings.data.quality,
+    devicePixelRatio,
+    cssSize: `${canvas.clientWidth}x${canvas.clientHeight}`,
+    backingStore: `${canvas.width}x${canvas.height}`,
+    megapixels: +((canvas.width * canvas.height) / 1e6).toFixed(2),
+    shadows: renderer.shadowMap.enabled,
+    // Interval is what you feel; work is what our JavaScript costs. If interval
+    // is high while work is low, the time is going to the GPU, not to us.
+    frameIntervalMs: stat(intervals),
+    ourWorkMs: stat(work.filter((w) => w > 0.2)),
+    level: level ? level.def.id : null,
+  };
+}
+
 const harness = {
+  diag,
   get level() {
     return level;
   },

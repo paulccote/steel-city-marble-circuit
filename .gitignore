@@ -1,3 +1,6 @@
 node_modules
 dist
 .playwright-mcp
+ref-*.png
+ours-*.png
+r[0-9]-*.png
