@@ -1,5 +1,5 @@
 import type { Block, Entity, LevelDef, Vec3 } from '../game/types';
-import { arcWalk, box, deg, downtownSkyline, lampRow, pier } from './helpers';
+import { arcWalk, box, deg, downtownSkyline, lampRow, pier, portalGate, stairFlight } from './helpers';
 
 /**
  * Level 2 — Point State Park.
@@ -40,7 +40,7 @@ blocks.push(
 // A wedge of land widening eastward, which is the actual shape of the park.
 // The west edge stops at x = 30, nine units short of the fountain ring, so the
 // riverwalk is the only way across rather than an optional detour.
-for (let i = 0; i < 5; i++) {
+for (let i = 0; i < 6; i++) {
   const cx = 36.5 + i * 13;
   const hw = 14 + i * 2.6;
   blocks.push(box([cx, -0.5, 0], [13, 1, hw * 2], 'grass', 'grass'));
@@ -52,18 +52,59 @@ blocks.push(
   box([30, 0.6, 20], [1, 1.2, 16], 'concrete', 'default'),
 );
 
-// The chicane: three hedges, right–left–right. 1.8 units tall, which is above
-// the 1.4 a flat-ground jump can clear, so they are walls and not ramps.
-const hedge = (pos: Vec3, size: Vec3) =>
-  box(pos, size, 'grass', 'grass', { color: '#3f5d33' });
+// ------------------------------------------------- Commonwealth Place terrace
+// The lawn used to open on forty units of unbroken grass. It now starts three
+// units up on a paved terrace and steps down onto the park, so the first thing
+// the player sees is the course falling away from them rather than a plane.
+const TERRACE_Y = 3;
 blocks.push(
-  hedge([68, 0.9, -8], [2.4, 1.8, 20]),
-  hedge([56, 0.9, 9], [2.4, 1.8, 18]),
-  hedge([46, 0.9, -6], [2.4, 1.8, 16]),
+  box([84, TERRACE_Y - 0.5, 0], [22, 1, 30], 'cobblestone', 'cobblestone'),
+  box([95.5, TERRACE_Y + 0.9, 0], [1, 2.8, 30], 'concrete', 'default'),
+  box([84, TERRACE_Y + 0.9, -15.5], [22, 2.8, 1], 'concrete', 'default'),
+  box([84, TERRACE_Y + 0.9, 15.5], [22, 2.8, 1], 'concrete', 'default'),
+);
+blocks.push(...stairFlight([73, 0, 0], [79, TERRACE_Y, 0], 12, 7, 'concrete', 'cobblestone'));
+
+// The park gate. Twelve units ahead of the pad, which at this camera pitch is
+// close enough that the pylons run off the top of the frame and read as mass.
+blocks.push(
+  ...portalGate([68, 0, 0], 9, 5.2, {
+    texture: 'sandstone',
+    surface: 'default',
+    color: '#bdb29a',
+    thickness: 1.9,
+    beam: 1.4,
+  }),
 );
 
-blocks.push(...lampRow([72, 0, -20], [-1, 0, 0], 5, 11));
-blocks.push(...lampRow([72, 0, 20], [-1, 0, 0], 5, 11));
+// -------------------------------------------------------------- the great walk
+// A paved allee down the axis of the lawn, raised a tenth of a unit so it does
+// not fight the grass it sits on, with a kerb either side. The kerbs are the
+// point: two lines running to the vanishing point tell the eye how fast it is
+// moving in a way an unbroken field never will.
+blocks.push(box([50, -0.05, 0], [46, 0.3, 15], 'cobblestone', 'cobblestone'));
+// Non-colliding: the chicane deliberately throws the racing line eight units
+// off axis, and a solid kerb would be a fence across it.
+for (const z of [-7.3, 7.3]) {
+  blocks.push(box([50, 0.22, z], [46, 0.34, 0.7], 'concrete', 'default', { noCollide: true, color: '#b9b3a4' }));
+}
+
+// Planes and lamps along the kerb. Trunks collide, canopies do not, and both
+// sit four units off the racing line where they will actually sweep past.
+for (let i = 0; i < 6; i++) {
+  const x = 68 - i * 7.5;
+  for (const z of [-10.5, 10.5]) {
+    blocks.push(
+      { kind: 'cylinder', pos: [x, 2.1, z], radius: 0.55, height: 4.2, segments: 8,
+        texture: 'wood', surface: 'default' },
+      { kind: 'cylinder', pos: [x, 5.9, z], radius: 3.5, height: 5, segments: 10,
+        texture: 'grass', surface: 'grass', noCollide: true, color: '#3c5f33' },
+    );
+  }
+}
+
+blocks.push(...lampRow([66, 0, -8.4], [-1, 0, 0], 5, 9));
+blocks.push(...lampRow([66, 0, 8.4], [-1, 0, 0], 5, 9));
 
 // The Portal Bridge: the concrete gateway you pass under leaving the lawn. Its
 // piers are solid, so it also reads as a gate you must aim through.
@@ -74,11 +115,11 @@ blocks.push(
 );
 
 entities.push(
-  { kind: 'startPad', pos: [78, 0, 0] },
-  { kind: 'gem', pos: [72, 0.5, 0] },
-  { kind: 'gem', pos: [68, 0.5, 8] },
-  { kind: 'gem', pos: [56, 0.5, -7] },
-  { kind: 'gem', pos: [46, 0.5, 8] },
+  { kind: 'startPad', pos: [86, TERRACE_Y, 0] },
+  { kind: 'gem', pos: [79, TERRACE_Y + 0.5, 0] },
+  { kind: 'gem', pos: [60, 0.6, 8] },
+  { kind: 'gem', pos: [50, 0.6, -7] },
+  { kind: 'gem', pos: [40, 0.6, 8] },
 );
 
 // ------------------------------------------------------------- the riverwalk
@@ -212,7 +253,25 @@ for (let i = 0; i < 8; i++) {
   });
 }
 
+// Four jets off the plinth, tall enough to clear the horizon line from the far
+// end of the lawn. They are the only thing that marks the finish from the start.
+for (let i = 0; i < 4; i++) {
+  const a = deg(45 + i * 90);
+  blocks.push({
+    kind: 'cylinder',
+    pos: [Math.cos(a) * 2.6, 14, Math.sin(a) * 2.6],
+    radius: 0.5,
+    height: 24,
+    segments: 6,
+    texture: 'water',
+    surface: 'water',
+    noCollide: true,
+    color: '#d8ecf3',
+  });
+}
+
 entities.push(
+  { kind: 'checkpoint', pos: [-6.16, 0, 16.92] },
   { kind: 'gem', pos: [3.25, -0.4, -8.93] },
   { kind: 'gem', pos: [3.96, 1.2, 5.16] },
   { kind: 'endPad', pos: [0, 2.4, 0] },
@@ -231,7 +290,7 @@ export const pointLevel: LevelDef = {
   difficulty: 'intermediate',
   parTime: 60000,
   goldTime: 34000,
-  spawn: { pos: [78, 0.5, 0], yaw: -Math.PI / 2 },
+  spawn: { pos: [86, TERRACE_Y + 0.5, 0], yaw: -Math.PI / 2 },
   killY: -6,
   sky: {
     top: '#2f5f9e',

@@ -1,5 +1,5 @@
 import type { Block, Entity, LevelDef, Vec3 } from '../game/types';
-import { box, downtownSkyline, facadeRow, lampRow, slopeDeck, stairFlight } from './helpers';
+import { box, downtownSkyline, facadeRow, lampRow, portalGate, slopeDeck, stairFlight } from './helpers';
 
 /**
  * Level 6 — The Mount Washington Steps.
@@ -115,6 +115,28 @@ blocks.push(...facadeRow([-56, 0, -29], [1, 0, 0], 6, 10, 9));
 blocks.push(...facadeRow([-56, 0, -7], [1, 0, 0], 6, 10, 9));
 blocks.push(...lampRow([-52, 0, -13.9], [1, 0, 0], 5, 11));
 
+// A brick arch over the street ten units ahead of the pad, and shop awnings
+// down both sides. Non-colliding, all of it: the street is nine units wide and
+// on ice a decorative pilaster that narrowed it would be a trap. Their whole
+// job is to fill the frame and give the run-in a rhythm.
+blocks.push(
+  ...portalGate([-46, 0, -18], 3.8, 4.2, {
+    texture: 'brick',
+    surface: 'default',
+    color: '#8d5b4a',
+    thickness: 1,
+    beam: 1.3,
+    solid: false,
+  }),
+);
+for (let i = 0; i < 6; i++) {
+  const x = -54 + i * 8;
+  blocks.push(
+    box([x, 2.9, -14.5], [4.6, 0.25, 2.4], 'steelPainted', 'default', { noCollide: true, color: '#7a3f38' }),
+    box([x, 2.9, -21.5], [4.6, 0.25, 2.4], 'steelPainted', 'default', { noCollide: true, color: '#3d5a6b' }),
+  );
+}
+
 // Each drift sits two units past the end of the patch that commits you to a
 // lane, and each leaves a 4.8-unit gap on one side.
 blocks.push(
@@ -125,6 +147,10 @@ blocks.push(
 
 entities.push(
   { kind: 'startPad', pos: [-56, 0, -18] },
+  // Grandview is a long way from the street. Losing the pavement up there used
+  // to send you back down four flights of stairs; now it sends you back to the
+  // top of them.
+  { kind: 'checkpoint', pos: [20.9, 24, -15.3] },
   { kind: 'gem', pos: [-51, 0.5, -18] },
   { kind: 'gem', pos: [-39, 0.5, -15.2] },
   { kind: 'gem', pos: [-24, 0.5, -20.8] },

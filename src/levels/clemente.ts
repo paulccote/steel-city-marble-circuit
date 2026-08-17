@@ -1,5 +1,5 @@
 import type { Block, Entity, LevelDef, Vec3 } from '../game/types';
-import { box, downtownSkyline, gemLine, lampRow } from './helpers';
+import { box, downtownSkyline, gemLine, lampRow, portalGate, slopeDeck } from './helpers';
 
 /**
  * Level 3 — The Roberto Clemente Bridge.
@@ -27,7 +27,7 @@ const entities: Entity[] = [];
 const DECK_Z = 9;
 const GOLD = '#d6a638'; // the Sisters' Aztec gold
 const CHAIN_Z = 4.9;
-const TOWER_S = 40;
+const TOWER_S = -16;
 const TOWER_N = 112;
 
 /** Deck panel: yellow steel roadway, kerbed so the edge is felt before it is seen. */
@@ -43,22 +43,64 @@ blocks.push(
 );
 
 // --------------------------------------------------- south abutment, downtown
+// The downtown end sits up on the bluff and ramps down onto the deck, which is
+// what it does in life and what gives the opening frame a shape: the player
+// starts three units above the bridge and watches the deck fall away toward
+// the tower instead of staring at a flat plane.
+const PLAZA_Y = 3;
 blocks.push(
-  box([-40, -0.5, 0], [26, 1, 24], 'cobblestone', 'cobblestone'),
-  box([-53, 0.6, 0], [1, 2.2, 24], 'concrete', 'default'),
-  box([-40, 0.6, -12], [26, 2.2, 1], 'concrete', 'default'),
-  box([-40, 0.6, 12], [26, 2.2, 1], 'concrete', 'default'),
+  box([-43, PLAZA_Y - 0.5, 0], [22, 1, 24], 'cobblestone', 'cobblestone'),
+  box([-53.5, PLAZA_Y + 0.6, 0], [1, 2.2, 24], 'concrete', 'default'),
+  box([-43, PLAZA_Y + 0.6, -12], [22, 2.2, 1], 'concrete', 'default'),
+  box([-43, PLAZA_Y + 0.6, 12], [22, 2.2, 1], 'concrete', 'default'),
+  // The ramp down onto the bridge: three units over eight, about 21 degrees.
+  slopeDeck([-32, PLAZA_Y, 0], [-26, 0, 0], 9, 0.8, 'cobblestone', 'cobblestone'),
+  // A kerb line and a banding course across the plaza. An unbroken paved
+  // expanse is the specific thing that reads as wallpaper; two lines across it
+  // do not. Both non-colliding: a 0.3 lip across the racing line stopped a
+  // marble at full roll dead when it was solid.
+  box([-38, PLAZA_Y + 0.08, 0], [0.5, 0.3, 24], 'concrete', 'default', { noCollide: true, color: '#9aa0a6' }),
+  box([-32.4, PLAZA_Y + 0.05, 0], [1.4, 0.2, 24], 'concrete', 'default', { noCollide: true, color: '#9aa0a6' }),
 );
-blocks.push(...lampRow([-48, 0, -8], [1, 0, 0], 3, 8));
-blocks.push(...lampRow([-48, 0, 8], [1, 0, 0], 3, 8));
 
-entities.push({ kind: 'startPad', pos: [-46, 0, 0] });
+// The chain anchorages. Self-anchored or not, the eyebars have to land in
+// something, and two five-unit blocks either side of the start pad are the
+// cheapest way to put mass in the frame's outer thirds.
+// Seven and a half units off the centreline and ten ahead of the pad, which is
+// as close as they can come before they stop framing the bridge and start
+// hiding it.
+for (const z of [-8.5, 8.5]) {
+  blocks.push(
+    box([-31, PLAZA_Y + 1.8, z], [7, 3.6, 3.4], 'sandstone', 'default', { color: '#a89e8c' }),
+    box([-31, PLAZA_Y + 3.85, z], [7.8, 0.5, 4], 'sandstone', 'default', {
+      noCollide: true,
+      color: '#8f8778',
+    }),
+  );
+}
+
+// Bollards down both sides of the walking line. They live in the near field,
+// which is the part of the frame the camera's downward pitch fills with floor
+// no matter what is on the horizon — the only cure for it is something close.
+for (let i = 0; i < 4; i++) {
+  for (const z of [-5.2, 5.2]) {
+    blocks.push(
+      { kind: 'cylinder', pos: [-37 + i * 4.6, PLAZA_Y + 0.45, z], radius: 0.26, height: 0.9,
+        segments: 8, texture: 'steel', surface: 'steel', color: '#6c7480' },
+    );
+  }
+}
+
+blocks.push(...lampRow([-50, PLAZA_Y, -10.4], [1, 0, 0], 3, 7));
+blocks.push(...lampRow([-50, PLAZA_Y, 10.4], [1, 0, 0], 3, 7));
+
+entities.push({ kind: 'startPad', pos: [-40, PLAZA_Y, 0] });
 
 // --------------------------------------------- beat 1: two holes in the deck
 // Thirty units of run-up, about twice the distance it takes to reach the
 // rolling ceiling, so the first gap is met at full pace however the player
 // drives up to it.
-blocks.push(...deckPanel(-28, 2));
+blocks.push(...deckPanel(-26, 2));
 blocks.push(...deckPanel(6.5, 20));
 blocks.push(...deckPanel(26, TOWER_S));
 
@@ -107,7 +149,7 @@ for (const z of [-CHAIN_Z, CHAIN_Z]) {
     );
   }
   // Side spans, anchored back down into the abutments.
-  for (const [ax, bx, y0, y1] of [[-28, TOWER_S, 3.5, 16], [TOWER_N, 176, 16, 3.5]] as const) {
+  for (const [ax, bx, y0, y1] of [[-41, TOWER_S, 6.5, 16], [TOWER_N, 176, 16, 3.5]] as const) {
     blocks.push(
       box([(ax + bx) / 2, (y0 + y1) / 2, z], [Math.hypot(bx - ax, y1 - y0), 0.36, 0.36], 'steelPainted', 'steel', {
         rot: [0, 0, Math.atan2(y1 - y0, bx - ax)],
@@ -117,6 +159,47 @@ for (const z of [-CHAIN_Z, CHAIN_Z]) {
     );
   }
 }
+
+// Suspender rods down the approach, every six units at both chain lines. They
+// are the whole reason this opening frame is not a paved plane: nineteen
+// verticals four and a half units off the racing line, each one sweeping past
+// the camera, is what a bridge feels like from a marble's eye height.
+for (let x = -10; x <= 38; x += 6) {
+  const top = chainY(x);
+  for (const z of [-CHAIN_Z, CHAIN_Z]) {
+    blocks.push({
+      kind: 'cylinder',
+      pos: [x, top / 2, z],
+      radius: 0.11,
+      height: top,
+      segments: 6,
+      texture: 'steelPainted',
+      surface: 'steel',
+      noCollide: true,
+      color: GOLD,
+    });
+  }
+  // A collar where each rod meets the deck, so the rank has a base line.
+  blocks.push(
+    box([x, 0.18, 0], [0.4, 0.24, CHAIN_Z * 2 + 1], 'steel', 'steel', { noCollide: true }),
+  );
+}
+
+// The portal through the south tower: the frame you roll under to get onto the
+// bridge, and the thing that says "suspension bridge" before anything else.
+blocks.push(
+  // The beam sits at 3.6 rather than up at the tower's waist. Anything higher
+  // than about four units leaves the frame at this range, and a portal you
+  // cannot see is not a portal.
+  ...portalGate([TOWER_S, 0, 0], 4.35, 3.6, {
+    texture: 'steelPainted',
+    surface: 'steel',
+    color: GOLD,
+    thickness: 1.1,
+    beam: 1.2,
+    solid: false,
+  }),
+);
 
 // ------------------------------------------ beat 2: the suspender platforms
 // 5.5 units of platform, and grit-blasted rather than bare steel. Restitution
@@ -155,6 +238,13 @@ for (const gap of GAPS) {
 // --------------------------------------------- beat 3: the fourteen-unit gap
 blocks.push(...deckPanel(TOWER_N, 130));
 entities.push({ kind: 'powerup', type: 'superJump', pos: [125, 0.9, 0] });
+// Two checkpoints. Missing a suspender platform or the fourteen-unit gap used
+// to cost the whole bridge; now it costs the section you were in, which is the
+// right size of penalty for a mistake this readable.
+entities.push(
+  { kind: 'checkpoint', pos: [32, 0, 0] },
+  { kind: 'checkpoint', pos: [116, 0, 0] },
+);
 
 // Chevron boards at the lip. Nothing about this gap looks different from the
 // last six, so the level says out loud that it is, and says it from far enough
@@ -238,7 +328,7 @@ blocks.push(...sisterBridge(-64), ...sisterBridge(-128));
 
 blocks.push(...downtownSkyline([-130, -6, 30], 80, 5));
 
-const spawn: Vec3 = [-46, 0.5, 0];
+const spawn: Vec3 = [-40, PLAZA_Y + 0.5, 0];
 
 export const clementeLevel: LevelDef = {
   id: 'clemente',

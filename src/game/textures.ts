@@ -439,41 +439,53 @@ function drawSurface(name: TextureName, size: number, mode: Mode): HTMLCanvasEle
     }
 
     case 'glass': {
-      // Twelve panes across rather than four. These towers sit on the horizon,
-      // and four big squares read as a gameplay checkerboard; a fine grid mips
-      // down to a soft tint and stays where it belongs, in the backdrop.
-      const n = 12;
+      // A curtain wall drawn at building scale: with a tile every eight world
+      // units, eight panes across puts a window at about a metre, which is
+      // still five pixels wide on a tower a hundred units out. Twelve panes
+      // mipped away to a flat tint at that range, which is exactly why the
+      // skyline read as painted slabs rather than as buildings.
+      const n = 8;
       const cell = size / n;
-      // Dark mullions, and dark overall: the curtain wall is a silhouette
-      // first. The old near-white panes were the brightest thing in the frame.
-      ctx.fillStyle = C('#10192a', '#2a2a2a');
+      // A storey is a band of glass over a solid spandrel, not a square. That
+      // horizontal beat is what the eye counts to decide a distant box is
+      // forty floors of building; a square grid of equal cells is a
+      // chequerboard whichever colours it is painted in.
+      const glazing = cell * 0.58;
+      ctx.fillStyle = C('#16202f', '#2a2a2a');
       ctx.fillRect(0, 0, size, size);
       for (let y = 0; y < n; y++) {
+        // The spandrel: the concrete edge of the floor slab, in shadow.
+        ctx.fillStyle = C('#0b1220', '#3c3c3c');
+        ctx.fillRect(0, y * cell + glazing, size, cell - glazing);
         for (let x = 0; x < n; x++) {
-          const px = x * cell + 1.5 * S;
-          const py = y * cell + 1.5 * S;
-          const w = cell - 3 * S;
-          // Panes catch the sky at different angles, and a few floors are lit
-          // from inside; that variance is what makes a wall read as glass.
-          const lit = rng();
-          const warm = rng() < 0.06;
-          const g2 = ctx.createLinearGradient(px, py, px, py + w);
+          const px = x * cell + 2 * S;
+          const py = y * cell + 2 * S;
+          const w = cell - 4 * S;
+          const h2 = glazing - 3 * S;
+          // Glass mirrors the sky, so a wall grades from bright at the top of
+          // the building to dark where it reflects the ground. Per-pane
+          // variance rides on that grade rather than replacing it. Kept
+          // gentle: the grade repeats with the tile, and a steep one would
+          // band the tower into stripes every eight units.
+          const sky = 1.14 - (y / n) * 0.3;
+          const lit = 0.82 + rng() * 0.38;
+          const warm = rng() < 0.035;
+          const g2 = ctx.createLinearGradient(px, py, px, py + h2);
           if (warm) {
-            g2.addColorStop(0, C('#a98a4e', '#d8d8d8'));
-            g2.addColorStop(1, C('#6a5326', '#c0c0c0'));
+            g2.addColorStop(0, C('#d8b166', '#d8d8d8'));
+            g2.addColorStop(1, C('#8a6a30', '#c0c0c0'));
           } else {
-            const v = 0.4 + lit * 0.75;
-            g2.addColorStop(0, C(shade('#4b7ba4', v * 1.2), '#e8e8e8'));
-            g2.addColorStop(1, C(shade('#20415f', v), '#c8c8c8'));
+            const v = sky * lit;
+            g2.addColorStop(0, C(shade('#6f9fc6', v * 1.15), '#e8e8e8'));
+            g2.addColorStop(1, C(shade('#22456a', v), '#c8c8c8'));
           }
           ctx.fillStyle = g2;
-          ctx.fillRect(px, py, w, w);
+          ctx.fillRect(px, py, w, h2);
         }
       }
-      // A spandrel band every few floors, so the tower has horizontal
-      // structure instead of one undifferentiated grid.
-      ctx.fillStyle = C('#0d1420', '#404040');
-      for (let y = 0; y < n; y += 4) ctx.fillRect(0, y * cell, size, cell * 0.3);
+      // Piers every four bays, so the wall has vertical structure too.
+      ctx.fillStyle = C('#39485c', '#6a6a6a');
+      for (let x = 0; x < n; x += 4) ctx.fillRect(x * cell - 2.5 * S, 0, 6 * S, size);
       grain(10);
       break;
     }
@@ -601,6 +613,160 @@ function drawSurface(name: TextureName, size: number, mode: Mode): HTMLCanvasEle
     }
   }
   return canvas;
+}
+
+// -------------------------------------------------------- macro variation
+/**
+ * A tiling texture can only ever say what happens inside one tile. Past that
+ * it repeats, and a plaza built from a 2-unit tile repeats twenty times before
+ * it reaches the far kerb — which is why our cobble read as wallpaper. These
+ * maps carry the frequencies a tile cannot: drainage falls, wear paths,
+ * patched repairs, damp streaks. They are multiplied over the albedo in world
+ * space (see builder.ts), at tens of units per repeat, so the pattern the eye
+ * picks up is far larger than the pattern it can trace back to a tile.
+ *
+ * Mid grey is the identity: the shader doubles the sample, so 0.5 leaves the
+ * surface exactly as drawn.
+ */
+export type MacroKind = 'paving' | 'stone' | 'green' | 'metal' | 'city';
+
+const MACRO_SIZE = 256;
+
+/**
+ * Value noise on a periodic lattice. Periodic is the whole point — a macro map
+ * with a visible seam is worse than no macro map, because the seam is a hard
+ * line at exactly the scale the eye is scanning for.
+ */
+function periodicNoise(seed: number, cells: number) {
+  const g = new Float32Array(cells * cells);
+  const rng = makeRng(seed);
+  for (let i = 0; i < g.length; i++) g[i] = rng();
+  const at = (x: number, y: number) =>
+    g[(((y % cells) + cells) % cells) * cells + (((x % cells) + cells) % cells)];
+  const fade = (t: number) => t * t * (3 - 2 * t);
+  return (x: number, y: number) => {
+    const fx = x * cells;
+    const fy = y * cells;
+    const x0 = Math.floor(fx);
+    const y0 = Math.floor(fy);
+    const tx = fade(fx - x0);
+    const ty = fade(fy - y0);
+    const a = at(x0, y0) + (at(x0 + 1, y0) - at(x0, y0)) * tx;
+    const b = at(x0, y0 + 1) + (at(x0 + 1, y0 + 1) - at(x0, y0 + 1)) * tx;
+    return a + (b - a) * ty;
+  };
+}
+
+function drawMacro(kind: MacroKind): HTMLCanvasElement {
+  const size = MACRO_SIZE;
+  const { canvas, ctx } = makeCanvas(size);
+  const seed = hashSeed(`macro:${kind}`);
+  const n2 = periodicNoise(seed, 2);
+  const n4 = periodicNoise(seed ^ 0x51, 4);
+  const n8 = periodicNoise(seed ^ 0x9e37, 8);
+  const n16 = periodicNoise(seed ^ 0x2545, 16);
+  const img = ctx.createImageData(size, size);
+
+  // A soft line at `at`, measured the short way round the tile so it wraps.
+  const ridge = (v: number, at: number, width: number) => {
+    let d = Math.abs(((v - at) % 1) + 1) % 1;
+    if (d > 0.5) d = 1 - d;
+    return Math.exp(-(d * d) / (width * width));
+  };
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const u = x / size;
+      const v = y / size;
+      const fbm = n4(u, v) * 0.5 + n8(u, v) * 0.32 + n16(u, v) * 0.18;
+      // Warp every straight feature by the coarse octave, so a channel reads
+      // as a fall in the paving rather than as a ruled line.
+      const wu = u + (n4(u + 0.31, v) - 0.5) * 0.06;
+      const wv = v + (n4(u, v + 0.71) - 0.5) * 0.06;
+      let t = 0.5;
+      let warm = 1;
+
+      switch (kind) {
+        case 'paving': {
+          t = 0.5 + (fbm - 0.5) * 0.46;
+          // Bays. Real paving is laid in courses about ten units across, each
+          // course a slightly different batch, with a joint between them — and
+          // that grid, not the stones, is what the eye uses to judge the size
+          // of a plaza. Nothing at tile scale can supply it.
+          const bu = wu * 3;
+          const bv = wv * 3;
+          const bay = Math.floor(bu) * 7 + Math.floor(bv) * 13;
+          t *= 0.94 + (Math.abs(bay * 2654435761) % 97) / 97 * 0.14;
+          const joint = (f: number) => {
+            const d = Math.min(f - Math.floor(f), 1 - (f - Math.floor(f)));
+            return Math.exp(-(d * d) / 0.0009);
+          };
+          t -= 0.26 * Math.max(joint(bu), joint(bv));
+          // A patched repair: flatter and lighter than what is around it.
+          if (n2(u, v) > 0.66) t = t * 0.45 + 0.34 + (fbm - 0.5) * 0.1;
+          // Two drainage falls, crossing.
+          t -= 0.3 * ridge(wv, 0.46, 0.028) + 0.24 * ridge(wu, 0.19, 0.022);
+          // The wear path down the middle of the traffic: polished lighter.
+          t += 0.16 * ridge(wv + (n2(u, v) - 0.5) * 0.14, 0.78, 0.09);
+          warm = 1 + (n8(u + 0.5, v) - 0.5) * 0.06;
+          break;
+        }
+        case 'stone': {
+          // Weathering: damp runs down the wall and dirt gathers in patches.
+          t = 0.5 + (fbm - 0.5) * 0.5;
+          const streak = n8(u * 1.0, v * 0.12);
+          t -= Math.max(0, streak - 0.55) * 0.55;
+          t += Math.max(0, n4(u + 0.2, v * 0.5) - 0.62) * 0.4;
+          break;
+        }
+        case 'green': {
+          // Mown stripes first — a big lawn is read by its bands — then dry
+          // patches and the worn line where everybody walks.
+          const stripe = Math.sin(u * Math.PI * 2 * 4) * 0.5 + 0.5;
+          t = 0.5 + (stripe - 0.5) * 0.09 + (fbm - 0.5) * 0.4;
+          const dry = Math.max(0, n4(u + 0.6, v + 0.2) - 0.58);
+          t += dry * 0.5;
+          warm = 1 + dry * 0.5;
+          t -= 0.22 * ridge(wu + (n2(u, v) - 0.5) * 0.2, 0.35, 0.05);
+          break;
+        }
+        case 'metal': {
+          // Grime collects in long runs along a girder, not in blobs.
+          const run = n8(u * 0.15, v) * 0.6 + n16(u * 0.3, v) * 0.4;
+          t = 0.5 + (run - 0.5) * 0.45;
+          t -= Math.max(0, n4(u * 0.4, v) - 0.6) * 0.35;
+          break;
+        }
+        case 'city': {
+          // Whole-building variation: the towers are one texture, and without
+          // this every one of them is the same value as its neighbour.
+          t = 0.5 + (n2(u, v) - 0.5) * 0.6 + (n8(u, v) - 0.5) * 0.14;
+          warm = 1 + (n4(u, v) - 0.5) * 0.12;
+          break;
+        }
+      }
+
+      t = Math.max(0.24, Math.min(0.86, t));
+      const i = (y * size + x) * 4;
+      img.data[i] = clamp255(t * warm * 255);
+      img.data[i + 1] = clamp255(t * 255);
+      img.data[i + 2] = clamp255((t * (2 - warm)) * 255);
+      img.data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvas;
+}
+
+export function getMacroMap(kind: MacroKind): THREE.Texture {
+  const key = `#macro:${kind}`;
+  const hit = cache.get(key);
+  if (hit) return hit;
+  // No colour space conversion: these are multipliers, not colours, and 0.5
+  // has to survive the round trip as exactly 0.5 or every surface shifts.
+  const tex = finish(new THREE.CanvasTexture(drawMacro(kind)), false);
+  cache.set(key, tex);
+  return tex;
 }
 
 /** Sobel a height field into a tangent-space normal map. */

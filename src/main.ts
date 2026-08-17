@@ -255,12 +255,31 @@ function showMenu() {
  * the same as starting a level, so selection changes are debounced — holding
  * the next-course arrow should not queue up five level builds.
  */
+/**
+ * Candidate orbit geometry, each list ordered best-looking first. The default
+ * (23 back, 17 up, a wide sway) is the framing that was tuned by eye; the rest
+ * exist so a level whose scenery crowds the course can be backed away from or
+ * risen above rather than flown through.
+ */
+const ORBIT_REACH = [23, 28, 34];
+const ORBIT_LIFT = [17, 21, 26, 32];
+const ORBIT_SWAY = [0.8, 0.55, 0.3];
+/** Headings tried around the course, starting from broadside. */
+const ORBIT_HEADINGS = 12;
+/** Below this the camera is close enough to clip scenery, so keep searching. */
+const ORBIT_MIN_CLEARANCE = 2.5;
+
 const orbitCam = new THREE.PerspectiveCamera(55, 1, 0.1, 900);
 const orbitFrom = new THREE.Vector3();
 const orbitTo = new THREE.Vector3();
 const orbitTarget = new THREE.Vector3();
 let orbitT = 0;
+// Solved per level by fitOrbit: heading of the sway, how wide it swings, and
+// how far back and how high the camera sits.
 let orbitBase = 0;
+let orbitSway = ORBIT_SWAY[0];
+let orbitReach = ORBIT_REACH[0];
+let orbitLift = ORBIT_LIFT[0];
 let backdropPending = 0;
 let backdropBusy = false;
 
@@ -303,43 +322,151 @@ function resetOrbit(def: LevelDef) {
     Math.hypot(dx, dz) > 4
       ? Math.atan2(-dx, dz)
       : Math.atan2(-Math.cos(yaw), -Math.sin(yaw));
-  orbitBase = pickOrbitSide(def, broadside);
+  fitOrbit(def, broadside);
   updateOrbit(0);
 }
 
 /**
- * Broadside leaves two choices, and they are not equivalent: this level's
- * downtown skyline is a ring of towers *around* the course, so one side parks
- * the camera inside a glass facade and the other has the towers standing behind
- * the plaza where they belong. Rather than hand-tune per level, sample the sway
- * arc on both sides and keep whichever has more room.
+ * Choose the orbit geometry that keeps the camera out of the scenery.
+ *
+ * Broadside leaves two sides, and they are not equivalent: a level whose
+ * skyline is a ring of towers *around* the course has one side that parks the
+ * camera inside a glass facade and one that has the towers standing behind the
+ * course where they belong. Two of six levels need more than a side flip —
+ * Point is crowded on both sides — so the search also backs the camera off and
+ * raises it, in that order of preference, and settles for the roomiest option
+ * if nothing clears outright.
+ *
+ * The samples below have to span the *whole* envelope the orbit actually flies.
+ * An earlier version sampled a narrower one and confidently picked the worse
+ * side on Clemente, which is the entire failure mode this guards against.
  */
-function pickOrbitSide(def: LevelDef, broadside: number): number {
-  let best = broadside;
+function fitOrbit(def: LevelDef, broadside: number) {
+  let best = { base: broadside, sway: ORBIT_SWAY[0], reach: ORBIT_REACH[0], lift: ORBIT_LIFT[0] };
   let bestClearance = -Infinity;
-  for (const side of [broadside, broadside + Math.PI]) {
-    let clearance = Infinity;
-    for (let ti = 0; ti <= 2; ti++) {
-      orbitTarget.lerpVectors(orbitFrom, orbitTo, (ti / 2) * 0.35);
-      for (let ai = 0; ai <= 8; ai++) {
-        const a = side + (ai / 8 - 0.5) * 1.6;
-        clearance = Math.min(
-          clearance,
-          clearanceAt(
-            def,
-            orbitTarget.x + Math.cos(a) * 23,
-            orbitTarget.y + 18.5,
-            orbitTarget.z + Math.sin(a) * 23,
-          ),
-        );
+
+  for (const lift of ORBIT_LIFT) {
+    for (const reach of ORBIT_REACH) {
+      for (const sway of ORBIT_SWAY) {
+        let pick = -Infinity;
+        let picked = NaN;
+
+        for (let i = 0; i < ORBIT_HEADINGS; i++) {
+          const base = broadside + (i * 2 * Math.PI) / ORBIT_HEADINGS;
+          const clear = scoreOrbit(def, base, sway, reach, lift);
+          if (clear > bestClearance) {
+            bestClearance = clear;
+            best = { base, sway, reach, lift };
+          }
+          if (clear < ORBIT_MIN_CLEARANCE) continue;
+
+          // Among headings that are safe, take the one with the most city
+          // standing behind the course, discounted by how far it strays from
+          // broadside. Clearance alone cannot tell a plaza with downtown behind
+          // it from a plaza in front of empty sky — both are perfectly clear.
+          const offAxis = Math.abs(Math.asin(Math.abs(Math.sin(base - broadside))));
+          const score = backdropScore(def, base, reach, lift) * (1 - offAxis / Math.PI);
+          if (score > pick) {
+            pick = score;
+            picked = base;
+          }
+        }
+
+        // First workable size of orbit wins: the lists are ordered so that is
+        // also the best-looking one.
+        if (!Number.isNaN(picked)) {
+          orbitBase = picked;
+          orbitSway = sway;
+          orbitReach = reach;
+          orbitLift = lift;
+          return;
+        }
       }
     }
-    if (clearance > bestClearance) {
-      bestClearance = clearance;
-      best = side;
+  }
+
+  orbitBase = best.base;
+  orbitSway = best.sway;
+  orbitReach = best.reach;
+  orbitLift = best.lift;
+}
+
+/** Worst clearance a candidate orbit ever gets to, across its whole path. */
+function scoreOrbit(
+  def: LevelDef,
+  base: number,
+  sway: number,
+  reach: number,
+  lift: number,
+): number {
+  let worst = Infinity;
+  for (let ti = 0; ti <= 5; ti++) {
+    orbitTarget.lerpVectors(orbitFrom, orbitTo, 0.08 + (ti / 5) * 0.3);
+    // The radius and height each breathe by a few units as the orbit runs, so
+    // test the corners of that box rather than its centre.
+    for (const r of [reach - 3, reach + 3]) {
+      for (const h of [lift - 2, lift + 2]) {
+        for (let ai = 0; ai <= 10; ai++) {
+          const a = base + (ai / 10 - 0.5) * 2 * sway;
+          const d = clearanceAt(
+            def,
+            orbitTarget.x + Math.cos(a) * r,
+            orbitTarget.y + 1.5 + h,
+            orbitTarget.z + Math.sin(a) * r,
+          );
+          if (d < worst) worst = d;
+        }
+      }
     }
   }
-  return best;
+  return worst;
+}
+
+/**
+ * How much scenery stands *behind* the course from a given side — roughly the
+ * apparent area of every block past the subject and inside the view cone.
+ *
+ * This is what separates "the course sits in a city" from "the course floats in
+ * front of the sky". Clearance alone cannot tell the two apart: empty air scores
+ * perfectly on clearance.
+ */
+function backdropScore(def: LevelDef, base: number, reach: number, lift: number): number {
+  orbitTarget.lerpVectors(orbitFrom, orbitTo, 0.23);
+  const cx = orbitTarget.x + Math.cos(base) * reach;
+  const cy = orbitTarget.y + 1.5 + lift;
+  const cz = orbitTarget.z + Math.sin(base) * reach;
+  const fx = orbitTarget.x - cx;
+  const fz = orbitTarget.z - cz;
+  const flen = Math.hypot(fx, fz) || 1;
+
+  let score = 0;
+  for (const b of def.blocks) {
+    const dx = b.pos[0] - cx;
+    const dz = b.pos[2] - cz;
+    const dist = Math.hypot(dx, dz);
+    // Beyond the subject, in front of the camera, and near enough to read
+    // through the fog.
+    if (dist < flen || dist > 320) continue;
+    if ((dx * fx + dz * fz) / (dist * flen) < 0.77) continue;
+
+    let w: number;
+    let h: number;
+    if (b.kind === 'box' || b.kind === 'ramp') {
+      w = Math.max(b.size[0], b.size[2]);
+      h = b.size[1];
+    } else if (b.kind === 'cylinder') {
+      w = b.radius * 2;
+      h = b.height;
+    } else {
+      w = (b.radius + b.width / 2) * 2;
+      h = b.thickness * 2;
+    }
+    // Only scenery standing at or above the camera reads as a backdrop;
+    // anything far below is floor, and floor is what we are trying to fill.
+    if (b.pos[1] + h / 2 < cy - 6) continue;
+    score += (w * h) / dist;
+  }
+  return score;
 }
 
 /** Distance from a point to the nearest block, negative when inside one. */
@@ -390,9 +517,9 @@ function updateOrbit(dt: number) {
   // and the rivers fill the frame and the course sits *in* the city. The angle
   // sways either side of the spawn heading rather than orbiting all the way
   // round, which keeps the course in front of the camera at all times.
-  const a = orbitBase + Math.sin(orbitT * 0.085) * 0.8;
-  const r = 23 + Math.sin(orbitT * 0.11) * 3;
-  const h = 17 + Math.sin(orbitT * 0.17) * 2;
+  const a = orbitBase + Math.sin(orbitT * 0.085) * orbitSway;
+  const r = orbitReach + Math.sin(orbitT * 0.11) * 3;
+  const h = orbitLift + Math.sin(orbitT * 0.17) * 2;
   orbitCam.position.set(
     orbitTarget.x + Math.cos(a) * r,
     orbitTarget.y + h,
@@ -504,64 +631,21 @@ async function boot() {
   // only means anything once the renderer has been sized.
   settings.apply();
   resize();
+
+  // Comparison runs need to screenshot a specific menu on a specific course
+  // without synthesising clicks first: `#levels` opens course select, and
+  // `#course=3` (1-based, and combinable as `#course=3,levels`) picks one.
+  const hash = location.hash.slice(1).split(',');
+  const course = hash.find((h) => h.startsWith('course='));
+  if (course) shell.select(Number(course.slice(7)) - 1);
+
   goto('menu');
   requestAnimationFrame(frame);
   await ensureBackdrop(shell.selected);
   shell.setLoading(false);
 
-  // `#levels` opens straight into course select. Comparison runs need to
-  // screenshot a specific menu without synthesising clicks first.
-  if (location.hash === '#levels') goto('levels');
+  if (hash.includes('levels')) goto('levels');
 
-  // TEMP-ORBIT-AUDIT
-  if (location.hash === '#audit') {
-    const rows: string[] = [];
-    for (const def of LEVELS) {
-      orbitFrom.fromArray(def.spawn.pos);
-      const endPad = def.entities.find((e) => e.kind === 'endPad');
-      orbitTo.fromArray(endPad ? endPad.pos : def.spawn.pos);
-      const dx = orbitTo.x - orbitFrom.x;
-      const dz = orbitTo.z - orbitFrom.z;
-      const broadside =
-        Math.hypot(dx, dz) > 4
-          ? Math.atan2(-dx, dz)
-          : Math.atan2(-Math.cos(def.spawn.yaw), -Math.sin(def.spawn.yaw));
-      const score = (side: number) => {
-        let worst = Infinity;
-        for (let ti = 0; ti <= 6; ti++) {
-          for (const r of [20, 23, 26]) {
-            for (const h of [15, 17, 19]) {
-              for (let ai = 0; ai <= 12; ai++) {
-                orbitTarget.lerpVectors(orbitFrom, orbitTo, 0.08 + (ti / 6) * 0.3);
-                const a = side + (ai / 12 - 0.5) * 1.6;
-                worst = Math.min(
-                  worst,
-                  clearanceAt(
-                    def,
-                    orbitTarget.x + Math.cos(a) * r,
-                    orbitTarget.y + 1.5 + h,
-                    orbitTarget.z + Math.sin(a) * r,
-                  ),
-                );
-              }
-            }
-          }
-        }
-        return worst;
-      };
-      const chosen = pickOrbitSide(def, broadside);
-      const other = Math.abs(chosen - broadside) < 0.01 ? broadside + Math.PI : broadside;
-      rows.push(
-        `${def.id.padEnd(16)} blocks=${String(def.blocks.length).padStart(4)}  ` +
-          `run=${Math.hypot(dx, dz).toFixed(0).padStart(3)}  ` +
-          `CHOSEN=${score(chosen).toFixed(1).padStart(7)}  rejected=${score(other).toFixed(1).padStart(7)}  ` +
-          `${score(chosen) > 0 ? 'CLEAR' : '*** BURIED ***'}`,
-      );
-    }
-    document.body.innerHTML =
-      `<pre style="position:fixed;inset:0;background:#fff;color:#000;font:15px/1.7 monospace;padding:20px;z-index:99">` +
-      `ORBIT AUDIT — worst clearance over full sway/radius/height envelope\n\n${rows.join('\n')}</pre>`;
-  }
 }
 
 void boot();

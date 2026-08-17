@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { LevelDef, MoverEntity, PowerupType, Vec3 } from './types';
-import { buildBlocks } from './builder';
+import { buildBlocks, setBackdropFog } from './builder';
 import {
   getGlowTexture,
   getTexture,
@@ -166,10 +166,16 @@ export class Level {
     const sunColor = punch(sky.sunColor, 1.8, 1.0);
     const sunDir = v3(sky.sunDir).normalize();
 
-    // Pulled in from the level's own numbers. The downtown skyline sits only
-    // 60-160 units out, which under the authored fog left it fully saturated
-    // and reading as gameplay geometry rather than as horizon.
-    this.scene.fog = new THREE.Fog(fogColor, sky.fogNear * 0.8, sky.fogFar * 0.6);
+    // Two fog curves, because the scene has two jobs for fog and they pull in
+    // opposite directions. Pulling the single curve in far enough to sink the
+    // downtown skyline also erased the Clemente's towers and chain, which are
+    // both distant and the whole point of that level. So: the scene's fog is
+    // now authored for gameplay and reaches well past the far end of the
+    // level, while backdrop meshes — non-colliding and standing clear of
+    // anything the marble can touch — take a much tighter curve of their own
+    // (see setBackdropFog / extendMaterial in builder.ts).
+    this.scene.fog = new THREE.Fog(fogColor, sky.fogNear, sky.fogFar * 1.35);
+    setBackdropFog(sky.fogNear * 0.85, sky.fogFar * 0.7);
     this.scene.background = skyBottom;
 
     // Sky dome: a large inverted sphere with a vertical gradient. Cheaper and

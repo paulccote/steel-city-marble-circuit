@@ -319,6 +319,104 @@ export function stairFlight(
   return out;
 }
 
+/**
+ * A gate straddling the route: two columns and a beam over the top.
+ *
+ * The chase camera sits 2.5 units back at 0.45 rad of downward pitch, and the
+ * vertical FOV is 60 degrees, so the top edge of the frame is only about 4.2
+ * degrees above the horizon. An object therefore only fits in frame if it is
+ * roughly thirteen times its own height away — a 16-unit tower needs 220 units
+ * of distance, by which point it is a smudge. Distant landmarks cannot carry
+ * an opening shot in this game.
+ *
+ * What can is structure the player is about to roll through. A gate 10-25
+ * units ahead runs off the top of the frame, which reads as mass rather than
+ * as a cut-off, fills the two side thirds that would otherwise be floor, and
+ * gives the eye something to measure speed against. Every level opens on one.
+ */
+export function portalGate(
+  pos: Vec3,
+  halfSpan: number,
+  height: number,
+  opts: {
+    texture?: TextureName;
+    surface?: SurfaceName;
+    color?: string;
+    /** Column footprint, along the route and across it. */
+    thickness?: number;
+    /** Depth of the beam over the opening. 0 leaves the gate open-topped. */
+    beam?: number;
+    solid?: boolean;
+    /** Rotate the whole gate about Y, for routes that do not run along X. */
+    yaw?: number;
+  } = {},
+): Block[] {
+  const t = opts.thickness ?? 2.2;
+  const texture = opts.texture ?? 'sandstone';
+  const surface = opts.surface ?? 'default';
+  const beam = opts.beam ?? 1.8;
+  const yaw = opts.yaw ?? 0;
+  const solid = opts.solid ?? true;
+  const out: Block[] = [];
+  // Local frame: the route runs along +X, the gate spans Z.
+  const place = (lx: number, ly: number, lz: number, size: Vec3, noCollide = false, tex = texture, col = opts.color) => {
+    const c = Math.cos(yaw);
+    const s = Math.sin(yaw);
+    out.push(
+      box(
+        [pos[0] + lx * c + lz * s, pos[1] + ly, pos[2] - lx * s + lz * c],
+        size,
+        tex,
+        surface,
+        { rot: [0, yaw, 0], noCollide: noCollide || !solid, color: col },
+      ),
+    );
+  };
+  for (const side of [-1, 1]) {
+    place(0, height / 2, side * (halfSpan + t / 2), [t, height, t]);
+    // A capital, so the column has a top even when the top is off-screen.
+    place(0, height + 0.35, side * (halfSpan + t / 2), [t + 0.7, 0.7, t + 0.7], true);
+  }
+  if (beam > 0) {
+    place(0, height + 1.2, 0, [t * 0.8, beam, (halfSpan + t) * 2], true);
+  }
+  return out;
+}
+
+/**
+ * A rank of columns down one side of a route. Their job is parallax: a wide
+ * flat plaza gives the eye nothing to measure motion against, and a rhythm of
+ * verticals four or five units off the racing line gives it everything.
+ */
+export function colonnade(
+  start: Vec3,
+  dir: Vec3,
+  count: number,
+  spacing: number,
+  height: number,
+  radius = 0.55,
+  texture: TextureName = 'sandstone',
+  color = '#c2b79f',
+): Block[] {
+  const out: Block[] = [];
+  for (let i = 0; i < count; i++) {
+    const p: Vec3 = [
+      start[0] + dir[0] * spacing * i,
+      start[1],
+      start[2] + dir[2] * spacing * i,
+    ];
+    out.push(
+      { kind: 'cylinder', pos: [p[0], p[1] + height / 2, p[2]], radius, height, segments: 10,
+        texture, surface: 'default', noCollide: true, color },
+      box([p[0], p[1] + height + 0.3, p[2]], [radius * 2.9, 0.6, radius * 2.9], texture, 'default', {
+        noCollide: true,
+        color,
+      }),
+    );
+  }
+  return out;
+}
+
 /** A support pier: what keeps a walkway over water from looking like it floats. */
 export function pier(pos: Vec3, height: number, radius = 0.5): Block[] {
   return [

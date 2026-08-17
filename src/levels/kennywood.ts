@@ -1,5 +1,5 @@
 import type { Block, Entity, LevelDef, Vec3 } from '../game/types';
-import { arcWalk, box, deg, slopeDeck } from './helpers';
+import { arcWalk, box, deg, portalGate, slopeDeck } from './helpers';
 
 /**
  * Level 5 — The Jack Rabbit.
@@ -106,7 +106,42 @@ for (let i = 0; i < 12; i++) {
   );
 }
 
+// The entrance arch at the foot of the lift, fourteen units ahead of the pad.
+// Kennywood's gate is the one piece of the park everybody can picture, and it
+// is also the cheapest way to stop the opening frame being a plank floor.
+blocks.push(
+  ...portalGate([2, 0, 0], 4.2, 4.6, {
+    texture: 'steelPainted',
+    surface: 'steel',
+    color: '#d43a2f',
+    thickness: 1.4,
+    beam: 1.6,
+    solid: false,
+  }),
+  box([2, 6.9, 0], [1.5, 1.9, 13], 'steelPainted', 'default', { noCollide: true, color: '#e8b93a' }),
+);
+
+// Station canopy posts down both sides of the platform. Four units off the
+// line and eight apart: a rhythm to measure the run-up against.
+for (let i = 0; i < 4; i++) {
+  for (const z of [-4.1, 4.1]) {
+    blocks.push(
+      { kind: 'cylinder', pos: [-15 + i * 5.4, 1.7, z], radius: 0.24, height: 3.4, segments: 8,
+        texture: 'steel', surface: 'steel', noCollide: true, color: '#cfd4da' },
+    );
+  }
+  blocks.push(
+    box([-15 + i * 5.4, 3.6, 0], [0.4, 0.4, 9], 'steelPainted', 'default', {
+      noCollide: true,
+      color: '#2f5f8a',
+    }),
+  );
+}
+
 entities.push({ kind: 'startPad', pos: [-12, 0, 0] });
+// The ravine is the one place a mistake costs the whole ride. A checkpoint on
+// the run into it makes the jump a test rather than a punishment.
+entities.push({ kind: 'checkpoint', pos: [108, 0, 0] });
 
 // --------------------------------------------------------------------- gems
 // Crest gems sit on the crest itself. It is tempting to hang them out in the
@@ -231,9 +266,9 @@ for (let i = 0; i < 22; i++) {
 // The arrow sign over the entrance, and something for it to stand on.
 blocks.push(
   box([-29.5, -0.5, 0], [27, 1, 20], 'asphalt', 'tarmac'),
-  box([-30, 8, 0], [1.2, 16, 1.2], 'steel', 'default', { noCollide: true, color: '#c8ccd2' }),
-  box([-30, 15, 0], [1.6, 3.2, 14], 'steelPainted', 'default', { noCollide: true, color: '#d43a2f' }),
-  box([-30, 15, 8.4], [1.6, 5.4, 5.4], 'steelPainted', 'default', {
+  box([-30, 8, 9], [1.2, 16, 1.2], 'steel', 'default', { noCollide: true, color: '#c8ccd2' }),
+  box([-30, 15, 9], [1.6, 3.2, 14], 'steelPainted', 'default', { noCollide: true, color: '#d43a2f' }),
+  box([-30, 15, 17.4], [1.6, 5.4, 5.4], 'steelPainted', 'default', {
     rot: [Math.PI / 4, 0, 0],
     noCollide: true,
     color: '#d43a2f',

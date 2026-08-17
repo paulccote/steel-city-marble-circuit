@@ -1,5 +1,5 @@
 import type { Block, Entity, LevelDef, Vec3 } from '../game/types';
-import { box, deg, downtownSkyline, gemLine, lampRow, slopeDeck, stairFlight } from './helpers';
+import { box, deg, downtownSkyline, gemLine, lampRow, portalGate, slopeDeck, stairFlight } from './helpers';
 
 /**
  * Level 4 — The Cathedral of Learning.
@@ -40,22 +40,66 @@ blocks.push(
   box([-80, -1.5, 0], [12, 1, 130], 'asphalt', 'tarmac'),
 );
 
-// Tree rows, which are also the chicane. Trunks collide; canopies do not.
-for (let i = 0; i < 6; i++) {
-  const z = i % 2 === 0 ? -9 : 9;
-  const x = -62 + i * 7;
+// The Fifth Avenue terrace, a step above the lawn. Small, but it means the
+// opening frame has the course dropping away from the player rather than
+// running flat to the horizon.
+blocks.push(
+  // Cobblestone, not concrete. Concrete tiles at roughly three units, so a
+  // terrace paved in it reads as one blank slab across the bottom half of the
+  // frame; cobble tiles at under one and reads as ground.
+  box([-73, 0.75, 0], [16, 1.5, 26], 'cobblestone', 'cobblestone'),
+);
+blocks.push(...stairFlight([-60, 0, 0], [-65, 1.5, 0], 11, 4, 'concrete', 'cobblestone'));
+// Bollards along the terrace edge: near-field verticals for the part of the
+// frame the camera's pitch fills with floor whatever is on the horizon.
+for (const z of [-5.4, 5.4]) {
+  for (let i = 0; i < 3; i++) {
+    blocks.push(
+      { kind: 'cylinder', pos: [-75 + i * 4, 2, z], radius: 0.28, height: 1, segments: 8,
+        texture: 'sandstone', surface: 'default', color: '#9c9282' },
+    );
+  }
+}
+
+// The gate onto the lawn: two stone pylons ten units ahead of the pad. At this
+// camera pitch they leave the top of the frame, which is exactly what makes
+// them read as a gateway rather than as two more blocks on a field.
+blocks.push(
+  ...portalGate([-58, 0, 0], 6.2, 6, {
+    texture: 'sandstone',
+    surface: 'default',
+    color: '#bcae92',
+    thickness: 2.2,
+    beam: 1.5,
+  }),
+);
+
+// A flagged walk from the gate to the foot of the stair, with a kerb either
+// side, so the lawn is not one unbroken field of green.
+blocks.push(box([-48, 0.05, 0], [30, 0.3, 13], 'concrete', 'cobblestone', { color: '#a8a396' }));
+// Non-colliding: the tree chicane sends the line across these, so they are a
+// drawn edge and not a barrier.
+for (const z of [-6.4, 6.4]) {
+  blocks.push(box([-48, 0.3, z], [30, 0.3, 0.6], 'sandstone', 'default', { noCollide: true, color: '#b6ab93' }));
+}
+
+// Tree rows, which are also the chicane. Trunks collide; canopies do not. Eight
+// units off the line rather than nine, and thicker, so they actually sweep.
+for (let i = 0; i < 7; i++) {
+  const z = i % 2 === 0 ? -8 : 8;
+  const x = -54 + i * 6;
   blocks.push(
-    { kind: 'cylinder', pos: [x, 2, z], radius: 0.5, height: 4, segments: 8, texture: 'wood', surface: 'default' },
-    { kind: 'cylinder', pos: [x, 5.4, z], radius: 3.4, height: 4.6, segments: 10, texture: 'grass', surface: 'grass', noCollide: true, color: '#3d5f34' },
+    { kind: 'cylinder', pos: [x, 2.1, z], radius: 0.75, height: 4.2, segments: 8, texture: 'wood', surface: 'default' },
+    { kind: 'cylinder', pos: [x, 5.8, z], radius: 3.6, height: 5, segments: 10, texture: 'grass', surface: 'grass', noCollide: true, color: '#3d5f34' },
   );
 }
-blocks.push(...lampRow([-66, 0, -20], [1, 0, 0], 5, 12));
-blocks.push(...lampRow([-66, 0, 20], [1, 0, 0], 5, 12));
+blocks.push(...lampRow([-52, 0, -7.6], [1, 0, 0], 5, 9));
+blocks.push(...lampRow([-52, 0, 7.6], [1, 0, 0], 5, 9));
 
 entities.push(
-  { kind: 'startPad', pos: [-70, 0, 0] },
-  ...gemLine([-60, 0.5, 4], [-46, 0.5, -4], 2),
-  { kind: 'gem', pos: [-36, 0.5, 3] },
+  { kind: 'startPad', pos: [-70, 1.5, 0] },
+  ...gemLine([-54, 0.6, 4], [-46, 0.6, -4], 2),
+  { kind: 'gem', pos: [-38, 0.6, 3] },
 );
 
 // ------------------------------------------------------------- the base block
@@ -245,7 +289,7 @@ export const cathedralLevel: LevelDef = {
   difficulty: 'advanced',
   parTime: 82000,
   goldTime: 52000,
-  spawn: { pos: [-70, 0.5, 0], yaw: Math.PI / 2 },
+  spawn: { pos: [-70, 2, 0], yaw: Math.PI / 2 },
   killY: -8,
   sky: {
     top: '#16264c',

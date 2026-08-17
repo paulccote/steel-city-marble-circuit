@@ -1,5 +1,5 @@
 import type { Block, Entity, LevelDef, Vec3 } from '../game/types';
-import { box, downtownSkyline, gemLine, lampRow, river, trussBridge } from './helpers';
+import { box, downtownSkyline, gemLine, lampRow, portalGate, river, trussBridge } from './helpers';
 
 /**
  * Level 1 — The Duquesne Incline.
@@ -32,8 +32,52 @@ for (let i = 0; i < 5; i++) {
   );
 }
 
-blocks.push(...lampRow([-8, 0, -9], [1, 0, 0], 4, 6));
-blocks.push(...lampRow([-8, 0, 9], [1, 0, 0], 4, 6));
+// The lower station canopy. It stands over the start pad, and it is the single
+// biggest thing stopping this opening frame from being a paved square: at 0.45
+// rad of camera pitch the top of the frame is only about four degrees above
+// the horizon, so a roof four units up fills it, and the posts fill the sides
+// where an empty plaza put nothing at all.
+// It sits *ahead* of the pad, not over it. A roof above the camera fills the
+// top of the frame with its own underside and drops the whole plaza into
+// shadow; a roof you are about to roll under frames what is past it.
+for (let i = 0; i < 3; i++) {
+  for (const z of [-5, 5]) {
+    blocks.push(
+      { kind: 'cylinder', pos: [-7 + i * 4.6, 2.2, z], radius: 0.22, height: 4.4, segments: 8,
+        texture: 'steel', surface: 'steel', color: '#5d4a3a' },
+    );
+  }
+}
+blocks.push(
+  box([-1, 4.9, 0], [13, 0.4, 11.6], 'wood', 'default', { noCollide: true, color: '#7d4a3a' }),
+  box([-1, 5.35, -5.6], [13, 0.6, 0.5], 'wood', 'default', { noCollide: true, color: '#5f3a2d' }),
+  box([-1, 5.35, 5.6], [13, 0.6, 0.5], 'wood', 'default', { noCollide: true, color: '#5f3a2d' }),
+);
+
+// The gate out of the plaza toward the hillside, plus a kerb and two planters
+// to break twenty-six units of unrelieved cobble.
+blocks.push(
+  ...portalGate([9, 0, 0], 4.6, 4.4, {
+    texture: 'brick',
+    surface: 'default',
+    color: '#8a5a48',
+    thickness: 1.6,
+    beam: 1.4,
+  }),
+  // Decoration only. A 0.3-tall kerb across the racing line stopped a marble
+  // rolling at full speed stone dead — it is a line for the eye, so it has no
+  // business being a line for the physics.
+  box([3, 0.08, 0], [0.5, 0.3, 26], 'concrete', 'default', { noCollide: true, color: '#9aa0a6' }),
+);
+for (const z of [-9.5, 9.5]) {
+  blocks.push(
+    box([-3, 0.45, z], [7, 0.9, 5], 'brick', 'default', { color: '#7d5a4c' }),
+    box([-3, 0.95, z], [7.6, 0.3, 5.6], 'grass', 'grass', { noCollide: true, color: '#3f5d33' }),
+  );
+}
+
+blocks.push(...lampRow([-8, 0, -11.6], [1, 0, 0], 4, 6));
+blocks.push(...lampRow([-8, 0, 11.6], [1, 0, 0], 4, 6));
 
 entities.push(
   { kind: 'startPad', pos: [-8, 0, 0] },

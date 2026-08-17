@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { ArcBlock, Block, BoxBlock, CylinderBlock, RampBlock, TextureName } from './types';
-import { getNormalMap, getTexture } from './textures';
+import { getMacroMap, getNormalMap, getTexture, type MacroKind } from './textures';
 import { SURFACES } from '../engine/physics';
 import { CollisionMesh } from '../engine/collision';
 
@@ -177,14 +177,50 @@ const TEXTURE_DENSITY: Record<TextureName, number> = {
   steelPainted: 0.35,
   grass: 0.3,
   water: 0.04,
+  // A tile every eight units, so one pane of the curtain wall is about a
+  // metre. At 0.28 a pane was 10cm and mipped to a flat wash long before the
+  // tower did, which is what made the skyline read as coloured cardboard.
+  glass: 0.12,
   asphalt: 0.16,
-  glass: 0.28,
   wood: 0.42,
   rust: 0.5,
   ice: 0.2,
   sandstone: 0.24,
   yellowRamp: 0.4,
   incline: 0.55,
+};
+
+/**
+ * The second frequency: which macro map a surface takes, how many world units
+ * a repeat of it spans, and how hard it bites. The span is deliberately much
+ * larger than a tile — the whole point is to break the repeat at a scale the
+ * tile cannot reach — and it is measured in world units rather than tiles so
+ * two surfaces of different tile size still weather at the same rate.
+ */
+interface MacroLook {
+  kind: MacroKind;
+  /** World units per repeat of the macro map. */
+  span: number;
+  strength: number;
+}
+
+const MACRO: Partial<Record<TextureName, MacroLook>> = {
+  // A span of sixteen puts a paving course and a drainage fall inside the
+  // fifteen-odd units of ground a player can actually see ahead of the
+  // marble. Thirty was truer to a real plaza and completely invisible.
+  cobblestone: { kind: 'paving', span: 7, strength: 1.0 },
+  concrete: { kind: 'paving', span: 22, strength: 0.55 },
+  asphalt: { kind: 'paving', span: 20, strength: 0.5 },
+  sandstone: { kind: 'stone', span: 14, strength: 0.4 },
+  brick: { kind: 'stone', span: 12, strength: 0.36 },
+  grass: { kind: 'green', span: 18, strength: 0.55 },
+  wood: { kind: 'stone', span: 10, strength: 0.3 },
+  steel: { kind: 'metal', span: 16, strength: 0.3 },
+  steelPainted: { kind: 'metal', span: 18, strength: 0.26 },
+  rust: { kind: 'metal', span: 12, strength: 0.35 },
+  // Wide, because this one is breaking up a row of towers rather than a
+  // surface: a repeat shorter than a building would band each tower instead.
+  glass: { kind: 'city', span: 41, strength: 0.42 },
 };
 
 /**
@@ -214,7 +250,11 @@ const LOOK: Partial<Record<TextureName, SurfaceLook>> = {
   wood: { roughness: 0.72, metalness: 0.0, normalScale: 0.7, tint: 1.05 },
   incline: { roughness: 0.42, metalness: 0.1, normalScale: 0.5, env: 1.2, tint: 1.08 },
   grass: { roughness: 0.95, metalness: 0.0, normalScale: 0.5, tint: 1.1 },
-  glass: { roughness: 0.28, metalness: 0.3, env: 0.9, tint: 0.8 },
+  // Matte rather than mirrored, deliberately. A metallic tower takes its value
+  // from the environment map, which is the same sky on every face, so the two
+  // sides of a corner came out identical and the building read as a flat
+  // cut-out. Diffuse shading is what puts a sunlit face against a shaded one.
+  glass: { roughness: 0.52, metalness: 0.12, env: 0.7, tint: 0.92 },
   ice: { roughness: 0.08, metalness: 0.2, env: 2.0 },
   water: { roughness: 0.1, metalness: 0.6, env: 1.8 },
   yellowRamp: { roughness: 0.45, metalness: 0.0, env: 1.1, tint: 1.15 },
@@ -299,40 +339,270 @@ function mergeGeometries(geos: THREE.BufferGeometry[]): THREE.BufferGeometry {
 
 const DEFAULT_TEXTURE: TextureName = 'concrete';
 
+/**
+ * Fog for scenery, kept apart from the fog the scene carries. One curve cannot
+ * serve both: on the Clemente the towers and the chain are the most distant
+ * thing on screen and also the subject of the level, so a curve tight enough
+ * to sink the skyline behind them erases the bridge with it. The scene's own
+ * fog is now authored for gameplay, and only backdrop meshes take this.
+ */
+let backdropFog = { near: 40, far: 160 };
+
+export function setBackdropFog(near: number, far: number) {
+  backdropFog = { near, far };
+}
+
+/**
+ * How far a non-colliding block has to stand off the playable world before it
+ * counts as backdrop. `noCollide` alone is not the test: the Clemente's chain,
+ * its tower crossbeams and every stair tread are non-colliding and sit right
+ * on top of the route. Distance from the nearest thing the marble can touch is
+ * what actually separates "scenery" from "the level".
+ */
+const BACKDROP_STANDOFF = 22;
+
+interface Prepared {
+  geo: THREE.BufferGeometry;
+  bounds: THREE.Box3;
+  texture: TextureName;
+  color?: string;
+  backdrop: boolean;
+}
+
+/** Distance between two AABBs; zero if they touch or overlap. */
+function boxDistance(a: THREE.Box3, b: THREE.Box3): number {
+  const dx = Math.max(0, Math.max(a.min.x - b.max.x, b.min.x - a.max.x));
+  const dy = Math.max(0, Math.max(a.min.y - b.max.y, b.min.y - a.max.y));
+  const dz = Math.max(0, Math.max(a.min.z - b.max.z, b.min.z - a.max.z));
+  return Math.hypot(dx, dy, dz);
+}
+
+/**
+ * A roofline for a backdrop tower. A city reads as a city where it meets the
+ * sky: parapets, plant rooms, masts. A flat-topped extrusion reads as a slab
+ * however good the wall texture is, which is why the horizon here has been
+ * losing to the reference even after the checkerboard went away.
+ */
+function skylineCrown(b: BoxBlock): Block[] {
+  const [w, h, d] = b.size;
+  const foot = Math.max(w, d);
+  if (h < 20 || foot > 26 || h < foot * 1.5) return [];
+  if (b.rot && (b.rot[0] || b.rot[2])) return [];
+
+  const top = b.pos[1] + h / 2;
+  const out: Block[] = [
+    // The parapet: a hard, slightly proud lip. It is one unit of geometry and
+    // it is the difference between a box and a building.
+    {
+      kind: 'box',
+      pos: [b.pos[0], top + 0.45, b.pos[2]],
+      size: [w * 1.1, 0.9, d * 1.1],
+      rot: b.rot,
+      texture: 'concrete',
+      surface: 'default',
+      noCollide: true,
+      color: '#6f7986',
+    } as Block,
+  ];
+
+  if (h >= 40) {
+    // A plant room stepped back from the parapet, and a mast on the tallest.
+    const ph = Math.max(2.5, h * 0.09);
+    out.push({
+      kind: 'box',
+      pos: [b.pos[0], top + 0.9 + ph / 2, b.pos[2]],
+      size: [w * 0.58, ph, d * 0.58],
+      rot: b.rot,
+      texture: b.texture ?? DEFAULT_TEXTURE,
+      surface: 'default',
+      noCollide: true,
+      color: b.color,
+    } as Block);
+    if (h >= 55) {
+      out.push({
+        kind: 'cylinder',
+        pos: [b.pos[0], top + 0.9 + ph + h * 0.06, b.pos[2]],
+        radius: 0.22,
+        height: h * 0.12,
+        segments: 5,
+        texture: 'steel',
+        surface: 'default',
+        noCollide: true,
+        color: '#8d95a0',
+      } as Block);
+    }
+  }
+  return out;
+}
+
+/**
+ * World-space macro variation, and the backdrop's own fog curve. Both need to
+ * know where a fragment is in the world, which the stock material does not
+ * carry, so they share one pair of varyings.
+ *
+ * The macro map is sampled in world space rather than in UV, on purpose: box
+ * UVs restart at zero on every face of every block, so a UV-space overlay
+ * would repeat once per block and change nothing about a plaza built from six
+ * of them.
+ */
+function extendMaterial(
+  mat: THREE.MeshStandardMaterial,
+  macro: MacroLook | undefined,
+  backdrop: boolean,
+  key: string,
+) {
+  mat.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nvarying vec3 vSurfPos;\nvarying vec3 vSurfNormal;',
+      )
+      .replace(
+        '#include <beginnormal_vertex>',
+        `#include <beginnormal_vertex>
+        vSurfPos = ( modelMatrix * vec4( position, 1.0 ) ).xyz;
+        vSurfNormal = normalize( mat3( modelMatrix ) * objectNormal );`,
+      );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <common>',
+      '#include <common>\nvarying vec3 vSurfPos;\nvarying vec3 vSurfNormal;',
+    );
+
+    if (macro) {
+      shader.uniforms.macroMap = { value: getMacroMap(macro.kind) };
+      shader.uniforms.macroScale = { value: 1 / macro.span };
+      shader.uniforms.macroStrength = { value: macro.strength };
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          'varying vec3 vSurfNormal;',
+          `varying vec3 vSurfNormal;
+          uniform sampler2D macroMap;
+          uniform float macroScale;
+          uniform float macroStrength;`,
+        )
+        .replace(
+          '#include <map_fragment>',
+          `#include <map_fragment>
+          // Projected on whichever world plane the face most faces, so a deck
+          // and the kerb beside it weather as one surface.
+          vec3 mn = abs( vSurfNormal );
+          vec2 macroUv = mn.y > max( mn.x, mn.z )
+            ? vSurfPos.xz
+            : ( mn.x > mn.z ? vSurfPos.zy : vSurfPos.xy );
+          vec3 macro = texture2D( macroMap, macroUv * macroScale ).rgb;
+          diffuseColor.rgb *= mix( vec3( 1.0 ), macro * 2.0, macroStrength ); diffuseColor.rgb *= vec3(1.0, 0.2, 0.2);`,
+        )
+        .replace(
+          '#include <roughnessmap_fragment>',
+          `#include <roughnessmap_fragment>
+          // Where the macro darkens — a drainage fall, a damp streak — the
+          // surface also goes glossier, which is what sells it as wet stone
+          // rather than as a stain painted on.
+          roughnessFactor *= mix( 1.0, 0.55 + macro.g, macroStrength * 0.6 );`,
+        );
+    }
+
+    if (backdrop) {
+      shader.uniforms.backdropNear = { value: backdropFog.near };
+      shader.uniforms.backdropFar = { value: backdropFog.far };
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          'varying vec3 vSurfNormal;',
+          'varying vec3 vSurfNormal;\nuniform float backdropNear;\nuniform float backdropFar;',
+        )
+        .replace(
+          '#include <fog_fragment>',
+          `#ifdef USE_FOG
+            float bfog = smoothstep( backdropNear, backdropFar, vFogDepth );
+            // Haze lies in the valley, so a tower's foot sinks into the
+            // horizon while its crown keeps its value. That gradient up the
+            // face is most of what makes distance read as distance.
+            bfog *= mix( 1.0, 0.5, clamp( vSurfPos.y / 60.0, 0.0, 1.0 ) );
+            gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, bfog );
+          #endif`,
+        );
+    }
+  };
+  // Without this every extended material would share one compiled program.
+  mat.customProgramCacheKey = () => key;
+}
+
 export function buildBlocks(blocks: Block[]): BuiltGeometry {
-  const byKey = new Map<string, { geos: THREE.BufferGeometry[]; texture: TextureName; color?: string }>();
   const collision = new CollisionMesh();
 
-  for (const b of blocks) {
+  const prepare = (b: Block, backdrop: boolean): Prepared => {
     const geo = blockGeometry(b);
     applyUvScale(geo, b);
     // Non-indexed everywhere so collision extraction and merging stay simple.
     const solid = geo.index ? geo.toNonIndexed() : geo;
     solid.applyMatrix4(transformOf(b));
     solid.computeVertexNormals();
-
-    const texture = b.texture ?? DEFAULT_TEXTURE;
-    const key = `${texture}|${b.color ?? ''}`;
-    let bucket = byKey.get(key);
-    if (!bucket) byKey.set(key, (bucket = { geos: [], texture, color: b.color }));
-    bucket.geos.push(solid);
-
+    solid.computeBoundingBox();
     if (!b.noCollide) {
       const surface = SURFACES[b.surface ?? 'default'] ?? SURFACES.default;
       collision.addTriangles(solid.getAttribute('position').array as Float32Array, surface);
     }
+    return {
+      geo: solid,
+      bounds: solid.boundingBox!.clone(),
+      texture: b.texture ?? DEFAULT_TEXTURE,
+      color: b.color,
+      backdrop,
+    };
+  };
+
+  const prepared = blocks.map((b) => prepare(b, false));
+
+  // Everything the marble can touch, plus the box that contains all of it: the
+  // union is a cheap early-out for the towers and river planes that are miles
+  // outside it, so the per-block search only runs for the near misses.
+  const solidBounds: THREE.Box3[] = [];
+  const playable = new THREE.Box3();
+  blocks.forEach((b, i) => {
+    if (b.noCollide) return;
+    solidBounds.push(prepared[i].bounds);
+    playable.union(prepared[i].bounds);
+  });
+
+  const isBackdrop = (bounds: THREE.Box3) => {
+    if (!solidBounds.length) return false;
+    if (boxDistance(bounds, playable) > BACKDROP_STANDOFF) return true;
+    for (const s of solidBounds) {
+      if (boxDistance(bounds, s) <= BACKDROP_STANDOFF) return false;
+    }
+    return true;
+  };
+
+  const extra: Prepared[] = [];
+  blocks.forEach((b, i) => {
+    if (!b.noCollide) return;
+    if (!isBackdrop(prepared[i].bounds)) return;
+    prepared[i].backdrop = true;
+    if (b.kind === 'box') {
+      for (const c of skylineCrown(b as BoxBlock)) extra.push(prepare(c, true));
+    }
+  });
+  prepared.push(...extra);
+
+  const byKey = new Map<string, { geos: THREE.BufferGeometry[]; item: Prepared }>();
+  for (const p of prepared) {
+    const key = `${p.texture}|${p.color ?? ''}|${p.backdrop ? 'bg' : 'fg'}`;
+    let bucket = byKey.get(key);
+    if (!bucket) byKey.set(key, (bucket = { geos: [], item: p }));
+    bucket.geos.push(p.geo);
   }
 
   const meshes: THREE.Mesh[] = [];
-  for (const bucket of byKey.values()) {
+  for (const [key, bucket] of byKey) {
+    const { texture, color: tintColor, backdrop } = bucket.item;
     const merged = mergeGeometries(bucket.geos);
     // Repeat is baked into the UVs, so the texture itself repeats 1:1.
-    const look = LOOK[bucket.texture] ?? DEFAULT_LOOK;
-    const color = new THREE.Color(bucket.color ?? 0xffffff);
+    const look = LOOK[texture] ?? DEFAULT_LOOK;
+    const color = new THREE.Color(tintColor ?? 0xffffff);
     if (look.tint) color.multiplyScalar(look.tint);
-    const normalMap = getNormalMap(bucket.texture);
+    const normalMap = getNormalMap(texture);
     const mat = new THREE.MeshStandardMaterial({
-      map: getTexture(bucket.texture),
+      map: getTexture(texture),
       normalMap,
       color,
       roughness: look.roughness,
@@ -340,9 +610,11 @@ export function buildBlocks(blocks: Block[]): BuiltGeometry {
       envMapIntensity: look.env ?? 0.55,
     });
     if (normalMap) mat.normalScale.setScalar(look.normalScale ?? 1);
+    extendMaterial(mat, MACRO[texture], backdrop, key);
     const mesh = new THREE.Mesh(merged, mat);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
+    // Backdrop never reaches the shadow frustum, so it only costs a pass.
+    mesh.castShadow = !backdrop;
+    mesh.receiveShadow = !backdrop;
     meshes.push(mesh);
     for (const g of bucket.geos) g.dispose();
   }
