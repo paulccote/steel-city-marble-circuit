@@ -10,13 +10,22 @@ import { box, deg, downtownSkyline, gemLine, kerb, lampRow, portalGate, slopeDec
  *   1. The great stair. Twenty-three units of run for ten of rise — 23.5
  *      degrees, comfortably inside the 32 a marble can climb — so the first
  *      lesson is only "up is a thing you can do".
- *   2. The ledge spiral. Six corbelled runs around the shaft at 12.8 degrees,
- *      narrowing 3.5 → 2.8 → 2.2 units, with a gap broken into the third and
- *      fourth. A jump up a 13-degree slope only carries about five units
- *      forward, so the gaps are 3.5.
- *   3. The crown. The ledges stop and the last five units are taken as seven
+ *   2. The ledge spiral. Ten corbelled runs around the shaft at 12.8 degrees,
+ *      narrowing 3.5 → 3.2 → 2.9 → 2.6 → 2.3 units, with a gap broken into the
+ *      fifth and ninth. A jump up a 13-degree slope only carries about five
+ *      units forward, so the gaps are 3.5.
+ *   3. The crown. The ledges stop and the last eight units are taken as eleven
  *      hops between the lantern stones, each 0.7 higher and three units
  *      further in, spiralling to the mast.
+ *
+ * The proportions matter as much as the beats. This is the tallest schoolhouse
+ * in the western hemisphere and its whole identity is slenderness: a 24-unit
+ * base, a 14-unit shaft, and 72 units of height, which is a little over five to
+ * one on the shaft. Built at 34 tall it was a stone box with ledges on it and
+ * could have been any building anywhere. What makes it Gothic rather than tall
+ * is the second thing: the faces are not walls but bundles of vertical piers
+ * with the window bays recessed dark behind them, running unbroken from the
+ * ground to the crown, so the eye is dragged up the whole height in one move.
  *
  * Nothing in this level kills you. That is deliberate: it is a forty-unit
  * climb and there is no checkpoint, so the tower's own setbacks catch every
@@ -30,7 +39,7 @@ const entities: Entity[] = [];
 const STONE = '#c8bda4';
 const SHAFT = 7; // half-width of the tower shaft
 const TERRACE_Y = 10;
-const ROOF_Y = 34;
+const ROOF_Y = 50;
 
 // ------------------------------------------------------------ the Oakland lawn
 blocks.push(
@@ -118,17 +127,36 @@ blocks.push(
   box([0, TERRACE_Y / 2, 0], [24, TERRACE_Y, 24], 'sandstone', 'cobblestone', { color: STONE }),
 );
 
-// The Commons Room arcade: pointed openings around the base. Non-colliding, so
-// the base stays a clean solid to collide against.
+// The Commons Room arcade: pointed openings around all four sides of the base,
+// nearly the full ten units of its height. The Commons Room is a fifty-foot
+// Gothic hall and its windows are the tallest thing at ground level, so the
+// base is mostly glass between stone mullions rather than a stone plinth with
+// slots in it.
 for (let i = 0; i < 5; i++) {
-  const z = -8 + i * 4;
-  for (const sx of [-1, 1]) {
+  const t = -8 + i * 4;
+  for (const [ox, oz, yaw] of [
+    [12.1, t, 0],
+    [-12.1, t, 0],
+    [t, 12.1, Math.PI / 2],
+    [t, -12.1, Math.PI / 2],
+  ] as const) {
     blocks.push(
-      box([sx * 12.1, 3, z], [0.5, 6, 2.6], 'sandstone', 'default', { noCollide: true, color: '#3a3630' }),
-      box([sx * 12.1, 6.4, z], [0.5, 1.4, 1.4], 'sandstone', 'default', {
-        rot: [Math.PI / 4, 0, 0],
+      box([ox, 4.1, oz], [0.5, 7, 2.8], 'sandstone', 'default', {
+        rot: [0, yaw, 0],
         noCollide: true,
         color: '#3a3630',
+      }),
+      box([ox, 8, oz], [0.5, 1.5, 1.5], 'sandstone', 'default', {
+        rot: [yaw === 0 ? Math.PI / 4 : 0, yaw, yaw === 0 ? 0 : Math.PI / 4],
+        noCollide: true,
+        color: '#3a3630',
+      }),
+      // The mullion splitting each opening — the detail that makes a dark slot
+      // read as a window rather than a doorway.
+      box([ox + (yaw === 0 ? 0.15 : 0), 4.1, oz + (yaw === 0 ? 0 : 0.15)], [0.3, 7, 0.25], 'sandstone', 'default', {
+        rot: [0, yaw, 0],
+        noCollide: true,
+        color: '#c8bda4',
       }),
     );
   }
@@ -161,16 +189,52 @@ blocks.push(
     color: STONE,
   }),
 );
-// Buttress ribs up the faces. Pure silhouette — they are what stops a 24-unit
-// stone box from reading as a 24-unit stone box.
-for (const t of [-4.4, 0, 4.4]) {
-  for (const [ox, oz] of [[SHAFT + 0.3, t], [-SHAFT - 0.3, t], [t, SHAFT + 0.3], [t, -SHAFT - 0.3]] as const) {
+// The piers. Seven to a face, running the full forty units of shaft and on
+// down over the base block to the ground, with the window bay between each pair
+// sunk dark behind them. Three fat ribs read as buttresses on a box; seven thin
+// ones a unit and a half apart read as a Gothic tower, because the eye stops
+// counting and just follows them up.
+//
+// They stand only 0.3 proud, which is the one number that matters: the ledge
+// spiral is pinned to this same face, and anything deeper would be an obstacle
+// lying along the inside edge of every run.
+const PIERS = [-6, -4, -2, 0, 2, 4, 6];
+for (let i = 0; i < PIERS.length; i++) {
+  const t = PIERS[i];
+  for (const [ox, oz, yaw] of [
+    [SHAFT + 0.15, t, 0],
+    [-SHAFT - 0.15, t, 0],
+    [t, SHAFT + 0.15, Math.PI / 2],
+    [t, -SHAFT - 0.15, Math.PI / 2],
+  ] as const) {
+    // The pier itself, from the lawn to just under the crown.
     blocks.push(
-      box([ox, (TERRACE_Y + ROOF_Y) / 2 + 2, oz], [0.7, ROOF_Y - TERRACE_Y + 4, 0.7], 'sandstone', 'default', {
+      box([ox, (ROOF_Y + 1.6) / 2, oz], [0.6, ROOF_Y + 1.6, 0.6], 'sandstone', 'default', {
         noCollide: true,
-        color: '#b3a892',
+        rot: [0, yaw, 0],
+        color: '#d3c8ae',
+      }),
+      // A finial where it breaks the parapet, which is what turns a rank of
+      // verticals into a crown rather than a row of posts.
+      box([ox, ROOF_Y + 2.6, oz], [0.95, 1.6, 0.95], 'sandstone', 'default', {
+        noCollide: true,
+        rot: [0, yaw, 0],
+        color: '#c0b59c',
       }),
     );
+    // The recessed bay to the pier's left. Dark, and only on the shaft, so the
+    // base block keeps its own arcade.
+    if (i > 0) {
+      const m = (t + PIERS[i - 1]) / 2;
+      const [bx, bz] = yaw === 0 ? [ox - Math.sign(ox) * 0.1, m] : [m, oz - Math.sign(oz) * 0.1];
+      blocks.push(
+        box([bx, (TERRACE_Y + ROOF_Y) / 2, bz], [0.35, ROOF_Y - TERRACE_Y, 1.4], 'sandstone', 'default', {
+          noCollide: true,
+          rot: [0, yaw, 0],
+          color: '#4a4238',
+        }),
+      );
+    }
   }
 }
 
@@ -192,9 +256,21 @@ const corners: Vec3[] = [
  */
 const LEDGE_TRIM = { solid: false, bandColor: '#4b4034' } as const;
 
-/** Ledge widths per run: the spiral narrows as the exposure grows. */
-const RUN_W = [3.5, 3.5, 2.8, 2.8, 2.2, 2.2];
+/**
+ * Ledge widths per run: the spiral narrows as the exposure grows.
+ *
+ * Ten runs of four, not eight of five. Two constraints pick that pair. The
+ * pitch has to stay at the 12.8 degrees the jump distances in this level were
+ * measured against — at 16 the same 3.5-unit gap needed the jump a unit and a
+ * half earlier and the window for it got mean. And the count has to leave the
+ * spiral at the corner the roof ramp starts from: runs cycle through four
+ * corners, so only a count of 2 mod 4 finishes on the right one. Eight runs
+ * ended the climb diagonally opposite the closing pad, over open air.
+ */
+const RUN_W = [3.5, 3.5, 3.2, 3.2, 2.9, 2.9, 2.6, 2.6, 2.3, 2.3];
 const RUN_RISE = 4;
+/** Which runs are broken by a jump. Spaced so the ask is not two in a row. */
+const BROKEN = [4, 8];
 
 let level = TERRACE_Y;
 for (let i = 0; i < RUN_W.length; i++) {
@@ -233,9 +309,9 @@ for (let i = 0; i < RUN_W.length; i++) {
       ? [Math.sign(a[0]) * (SHAFT + w - 0.15), p[1], p[2]]
       : [p[0], p[1], Math.sign(a[2]) * (SHAFT + w - 0.15)];
 
-  if (i === 2 || i === 3) {
-    // Runs three and four are broken. The gap is 3.5 units, measured against
-    // the five a jump carries up a 13-degree slope.
+  if (BROKEN.includes(i)) {
+    // A broken run. The gap is 3.5 units, measured against the five a jump
+    // carries up a 13-degree slope.
     const t0 = 0.5 - 1.75 / 17.6;
     const t1 = 0.5 + 1.75 / 17.6;
     const at = (t: number): Vec3 => [
@@ -274,16 +350,18 @@ blocks.push(
 );
 
 // ------------------------------------------------------------ beat 3: the crown
-// Seven lantern stones, each 0.7 higher than the last and three units of chord
+// Eleven lantern stones, each 0.7 higher than the last and three units of chord
 // away. Three units at 0.7 up needs 5.7 m/s, which is what a marble carries
 // off a four-unit stone, and the stones are four units square so landing long
-// is as safe as landing short.
+// is as safe as landing short. Eleven rather than seven: the crown is the last
+// eight units of a seventy-two-unit tower, and at seven stones the taper was
+// over before it had read as a taper.
 const CHORD = 3;
 const STEP = 0.7;
-let r = 8;
+let r = 7;
 let ang = deg(45);
 let y = ROOF_Y + 0.8;
-for (let i = 0; i < 7; i++) {
+for (let i = 0; i < 11; i++) {
   blocks.push(
     box([Math.cos(ang) * r, y - 0.25, Math.sin(ang) * r], [4, 0.5, 4], 'sandstone', 'cobblestone', {
       rot: [0, -ang, 0],
@@ -294,10 +372,10 @@ for (let i = 0; i < 7; i++) {
   // 1.4 and the mast's 4.4-square cap covers it, so that gem was inside solid
   // stone. The finish gem on top of the mast is two thirds of a unit above it
   // and does the same job.
-  if (i % 2 === 0 && i < 6) {
+  if (i % 3 === 0 && i < 10) {
     entities.push({ kind: 'gem', pos: [Math.cos(ang) * r, y + 0.55, Math.sin(ang) * r] });
   }
-  const next = r - 1.1;
+  const next = r - 0.5;
   // The turn that puts the next stone exactly one chord away. As the spiral
   // tightens the turn grows, which is what makes the last hops feel inward.
   const cos = (r * r + next * next - CHORD * CHORD) / (2 * r * next);
@@ -310,21 +388,73 @@ for (let i = 0; i < 7; i++) {
 blocks.push(box([0, y - 0.25, 0], [4.4, 0.5, 4.4], 'sandstone', 'cobblestone', { color: '#d8cdb2' }));
 entities.push({ kind: 'gem', pos: [0, y + 0.5, 0] }, { kind: 'endPad', pos: [0, y, 0] });
 
-// Corner pinnacles, floodlit, framing the crown.
-for (const [px, pz] of [[-6.2, -6.2], [-6.2, 6.2], [6.2, 6.2], [6.2, -6.2]] as const) {
+// The corner buttresses of the crown: two stepped setbacks either side of the
+// lantern, then the pinnacle. The real tower does not stop, it tapers — three
+// steps in over its last forty feet — and stepping the corners is the cheapest
+// way to say so from the lawn.
+// They stand at 8.4, corbelled a unit and a half out past the shaft face, which
+// is both what a Gothic corner turret does and the only place they can go: the
+// crown spiral works inside a radius of seven and anything closer would have a
+// lantern stone half inside a buttress.
+for (const [px, pz] of [[-8.4, -8.4], [-8.4, 8.4], [8.4, 8.4], [8.4, -8.4]] as const) {
   blocks.push(
-    box([px, ROOF_Y + 4, pz], [1.6, 8, 1.6], 'sandstone', 'default', { noCollide: true, color: '#c0b59c' }),
-    box([px, ROOF_Y + 9, pz], [0.9, 2.4, 0.9], 'sandstone', 'default', { noCollide: true, color: '#c0b59c' }),
+    box([px, ROOF_Y - 3, pz], [2.6, 12, 2.6], 'sandstone', 'default', { noCollide: true, color: '#c8bda4' }),
+    box([px * 0.86, ROOF_Y + 7, pz * 0.86], [1.8, 8, 1.8], 'sandstone', 'default', { noCollide: true, color: '#c0b59c' }),
+    box([px * 0.72, ROOF_Y + 14, pz * 0.72], [1.1, 6, 1.1], 'sandstone', 'default', { noCollide: true, color: '#bab092' }),
+    box([px * 0.72, ROOF_Y + 18.5, pz * 0.72], [0.55, 3.4, 0.55], 'sandstone', 'default', { noCollide: true, color: '#bab092' }),
   );
 }
+// The lantern spire over the mast, measured off the mast rather than the roof:
+// it is the highest thing on the block and it is the last thing the silhouette
+// needs, because a tower this slender that stops flat reads as unfinished.
+blocks.push(
+  box([0, y + 2.4, 0], [3, 4.4, 3], 'sandstone', 'default', { noCollide: true, color: '#c8bda4' }),
+  box([0, y + 7.4, 0], [1.7, 6, 1.7], 'sandstone', 'default', { noCollide: true, color: '#bab092' }),
+  box([0, y + 12.4, 0], [0.6, 4.4, 0.6], 'sandstone', 'default', { noCollide: true, color: '#b3a892' }),
+);
 
 // ---------------------------------------------------------------- Heinz Chapel
 // Northeast of the lawn, where it stands. Decoration only, but it is the thing
 // that tells you which lawn you are on.
+// French Gothic: a narrow nave, a roof pitched far steeper than anything else
+// on the block, and a spire that is nearly as tall as the nave is long. Built
+// as a box with a stub on it, it read as a maintenance shed.
+const CHAPEL: Vec3 = [34, 0, 40];
 blocks.push(
-  box([34, 7, 40], [12, 14, 26], 'sandstone', 'default', { noCollide: true, color: '#b8ac95' }),
-  box([34, 18, 32], [5, 8, 5], 'sandstone', 'default', { noCollide: true, color: '#b8ac95' }),
-  box([34, 27, 32], [2.4, 12, 2.4], 'sandstone', 'default', { noCollide: true, color: '#a89c86' }),
+  box([CHAPEL[0], 8, CHAPEL[2]], [11, 16, 26], 'sandstone', 'default', { noCollide: true, color: '#b8ac95' }),
+);
+for (const side of [-1, 1]) {
+  blocks.push(
+    box([CHAPEL[0] + side * 3.1, 20, CHAPEL[2]], [7.4, 0.5, 26.6], 'sandstone', 'default', {
+      noCollide: true,
+      rot: [0, 0, side * deg(52)],
+      color: '#5c4a40',
+    }),
+  );
+  // Buttresses down the flanks, three a side.
+  for (let i = 0; i < 3; i++) {
+    blocks.push(
+      box([CHAPEL[0] + side * 6, 7, CHAPEL[2] - 8 + i * 8], [1.4, 14, 1.4], 'sandstone', 'default', {
+        noCollide: true,
+        color: '#a89c86',
+      }),
+    );
+  }
+}
+blocks.push(
+  // Lancet windows down the nave: three tall dark slots, the whole point of a
+  // building famous for its stained glass.
+  ...[-8, 0, 8].map((dz) =>
+    box([CHAPEL[0] - 5.6, 11, CHAPEL[2] + dz], [0.4, 9, 2.4], 'sandstone', 'default', {
+      noCollide: true,
+      color: '#3a3630',
+    }),
+  ),
+  // The tower and its spire over the west front.
+  box([CHAPEL[0], 13, CHAPEL[2] - 16], [7.5, 26, 7.5], 'sandstone', 'default', { noCollide: true, color: '#b8ac95' }),
+  box([CHAPEL[0], 29, CHAPEL[2] - 16], [5.2, 8, 5.2], 'sandstone', 'default', { noCollide: true, color: '#a89c86' }),
+  box([CHAPEL[0], 37, CHAPEL[2] - 16], [3, 10, 3], 'sandstone', 'default', { noCollide: true, color: '#a89c86' }),
+  box([CHAPEL[0], 45, CHAPEL[2] - 16], [1.2, 8, 1.2], 'sandstone', 'default', { noCollide: true, color: '#9c9182' }),
 );
 blocks.push(...downtownSkyline([-245, -10, 10], 55, 3));
 
@@ -334,8 +464,10 @@ export const cathedralLevel: LevelDef = {
   place: 'Oakland, forty-two storeys of it',
   hint: 'Every ledge is caught by the setback below it. You lose height, not the run — keep climbing.',
   difficulty: 'advanced',
-  parTime: 82000,
-  goldTime: 52000,
+  // Sixteen more units of climb than the tower used to have, and the spiral is
+  // the slow part of the run: both clocks move with it.
+  parTime: 112000,
+  goldTime: 72000,
   spawn: { pos: [-70, 2, 0], yaw: Math.PI / 2 },
   killY: -8,
   sky: {

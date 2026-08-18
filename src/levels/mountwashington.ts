@@ -1,5 +1,5 @@
 import type { Block, Entity, LevelDef, Vec3 } from '../game/types';
-import { box, downtownSkyline, facadeRow, kerb, lampRow, portalGate, slopeDeck, stairFlight } from './helpers';
+import { box, deg, downtownSkyline, facadeRow, kerb, lampRow, portalGate, slopeDeck, stairFlight } from './helpers';
 
 /**
  * Level 6 — The Mount Washington Steps.
@@ -124,8 +124,11 @@ blocks.push(
   box([-32, 1.2, -22.9], [56, 3.4, 1], 'brick', 'default'),
   box([-32, 1.2, -13.1], [56, 3.4, 1], 'brick', 'default'),
 );
-blocks.push(...facadeRow([-56, 0, -29], [1, 0, 0], 6, 10, 9));
-blocks.push(...facadeRow([-56, 0, -7], [1, 0, 0], 6, 10, 9));
+// Five fronts, not six. The sixth stood at x = -6, which put a nine-unit brick
+// slab hard against the mouth of the first flight — the steps are meant to run
+// between houses, not out of a doorway.
+blocks.push(...facadeRow([-56, 0, -29], [1, 0, 0], 5, 10, 9));
+blocks.push(...facadeRow([-56, 0, -7], [1, 0, 0], 5, 10, 9));
 blocks.push(...lampRow([-52, 0, -13.9], [1, 0, 0], 5, 11));
 
 // A brick arch over the street ten units ahead of the pad, and shop awnings
@@ -211,8 +214,33 @@ for (let i = 0; i < FLIGHTS.length; i++) {
   for (const dz of [-f.w / 2 - 0.3, f.w / 2 + 0.3]) {
     blocks.push(
       slopeDeck([f.x + dz, y0 + 0.7, z0], [f.x + dz, y0 + FLIGHT_RISE + 0.7, z1], 0.5, 1.5, 'concrete', 'default'),
+      // Galvanised pipe on top of the wall, and a stanchion every few steps.
+      // Every public stair in this city has one and it is the single cheapest
+      // detail that says "steps" rather than "ramp with lines drawn on it".
+      slopeDeck([f.x + dz, y0 + 2.1, z0], [f.x + dz, y0 + FLIGHT_RISE + 2.1, z1], 0.16, 0.16, 'steel', 'default', {
+        noCollide: true,
+        color: '#9aa1a8',
+      }),
     );
+    for (let k = 1; k < 5; k++) {
+      const t = k / 5;
+      blocks.push(
+        box([f.x + dz, y0 + FLIGHT_RISE * t + 1.5, z0 + (z1 - z0) * t], [0.14, 1.2, 0.14], 'steel', 'default', {
+          noCollide: true,
+          color: '#9aa1a8',
+        }),
+      );
+    }
   }
+  // And the centre rail, which is the other half of the picture: these flights
+  // are wide enough to need one and every one of them has it. Non-colliding —
+  // a solid post down the middle of a five-unit flight on ice would be a wall.
+  blocks.push(
+    slopeDeck([f.x, y0 + 1.1, z0], [f.x, y0 + FLIGHT_RISE + 1.1, z1], 0.14, 0.14, 'steel', 'default', {
+      noCollide: true,
+      color: '#9aa1a8',
+    }),
+  );
 
   // The landing is sized around this stair mouth and the next one — or, at the
   // top, around the ramp up to Grandview — so no flight ever overhangs it.
@@ -302,17 +330,90 @@ blocks.push(
 entities.push({ kind: 'endPad', pos: [37, 28, 34] });
 
 // ------------------------------------------------------------- the hillside
-// The wooded face of Mount Washington, the Mon, and downtown four hundred feet
-// down and across it. All decoration: the only thing under the staircase is
-// the reset.
-for (let i = 0; i < 9; i++) {
+//
+// The face of Mount Washington, under the whole staircase rather than in two
+// ranks of blocks off to the sides. It is defined as a straight 38-degree plane
+// because that is what the mountain is: steeper than the 32 a marble can climb,
+// so it could be solid and still not be a shortcut, and steep enough that the
+// flights obviously switchback *because* of it. All decoration regardless — the
+// only thing under the staircase is the reset.
+const hillY = (x: number) => Math.min(27, -8 + (x + 10) * 0.78);
+for (let x = -16; x < 46; x += 4) {
+  blocks.push(
+    slopeDeck([x, hillY(x), -5], [x + 4.1, hillY(x + 4.1), -5], 76, 16, 'grass', 'default', {
+      noCollide: true,
+      color: '#4d5647',
+    }),
+  );
+}
+// The shelf Sycamore Street is cut into. West of about x = 0 the mountain has
+// dropped below street level, and without this the first sixty units of the
+// level are a road on nothing.
+blocks.push(
+  box([-32, -8, -18], [72, 14, 34], 'grass', 'default', { noCollide: true, color: '#4a5344' }),
+  box([-32, -1.4, -18], [72, 1.4, 35], 'concrete', 'default', { noCollide: true, color: '#8e9298' }),
+);
+
+/**
+ * A hillside house: clapboard box, pitched roof, and the timber posts that hold
+ * its downhill half up.
+ *
+ * This is the point of the level. Pittsburgh's city steps are not stairs in a
+ * park — they are a public right of way threaded up a slope too steep to put a
+ * street on, with somebody's back porch three feet from the handrail on both
+ * sides. Without houses either side of every flight this is a staircase in
+ * snow, and a staircase in snow is not Mount Washington.
+ */
+function hillHouse(x: number, z: number, ground: number, tone: number): Block[] {
+  const w = 6.4;
+  const d = 7.4;
+  const floor = ground + 3.2;
+  const wall = ['#8d7f6e', '#7a6f63', '#6f7a72', '#8a6a5a'][tone % 4];
+  const out: Block[] = [
+    box([x, floor + 3, z], [w, 6, d], 'wood', 'default', { noCollide: true, color: wall }),
+    // Porch band and window row: two horizontal lines are what separate a
+    // clapboard house from a crate.
+    box([x, floor + 0.3, z], [w + 1.2, 0.5, d + 1.2], 'wood', 'default', { noCollide: true, color: '#5c5148' }),
+    box([x, floor + 4.4, z], [w + 0.12, 1.5, d * 0.62], 'glass', 'default', { noCollide: true, color: '#2f3740' }),
+  ];
+  // Gable roof.
+  const pitch = deg(34);
+  const half = w / 2 + 0.5;
+  const slab = half / Math.cos(pitch);
   for (const side of [-1, 1]) {
-    blocks.push(
-      box([-6 + i * 5, -14 + i * 3, side * (34 + i * 2)], [6, 30, 26], 'grass', 'default', {
+    out.push(
+      box([x + (side * half) / 2, floor + 6.2 + (slab * Math.sin(pitch)) / 2, z], [slab, 0.35, d + 1], 'wood', 'default', {
         noCollide: true,
-        color: '#4d5647',
+        rot: [0, 0, -side * pitch],
+        color: '#4a4038',
       }),
     );
+  }
+  // The stilts. A house on a 38-degree slope stands on its own legs downhill,
+  // and that silhouette is as much a part of these hills as the steps are.
+  for (const dx of [-2.4, 2.4]) {
+    for (const dz of [-2.8, 2.8]) {
+      out.push(
+        box([x + dx, (floor + ground - 4) / 2, z + dz], [0.4, floor - ground + 4, 0.4], 'wood', 'default', {
+          noCollide: true,
+          color: '#4f4337',
+        }),
+      );
+    }
+  }
+  return out;
+}
+
+// Two rows of them, one either side of the staircase, stepping up the hill with
+// it. Set outside the nine units the landings occupy so nothing decorative ever
+// stands where a player can be.
+for (let i = 0; i < 6; i++) {
+  const x = -4 + i * 6;
+  // Staggered in and out rather than in a straight rank. A solid row at one
+  // depth is a fence: from below it hides the very staircase it is there to
+  // explain, and hillside lots in this city are never that tidy anyway.
+  for (const [z, t] of [[i % 2 ? -24 : -30, i], [i % 2 ? 21 : 15, i + 2]] as const) {
+    blocks.push(...hillHouse(x, z, hillY(x) - 1.5, t));
   }
 }
 blocks.push(

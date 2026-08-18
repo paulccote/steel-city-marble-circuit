@@ -176,15 +176,59 @@ entities.push(
 );
 
 // ------------------------------------------------------------------ the towers
+/**
+ * A tower. The Sisters' towers are not columns with a bar across the top: they
+ * are riveted steel boxes that step in twice as they rise, carry a lattice
+ * portal between them, and finish in a pinnacle with a saddle under it. That
+ * profile is what tells a stranger at a glance that this is one of three
+ * identical 1920s eyebar bridges rather than a generic suspension bridge, so it
+ * is worth the fifteen extra boxes a side.
+ */
 const tower = (x: number): Block[] => {
   const out: Block[] = [];
   for (const z of [-CHAIN_Z, CHAIN_Z]) {
-    out.push(box([x, 5, z], [3, 22, 3], 'steelPainted', 'steel', { color: GOLD }));
+    // Shaft, then two setbacks, then the pinnacle and the cable saddle.
+    out.push(
+      box([x, 5, z], [3, 22, 3], 'steelPainted', 'steel', { color: GOLD }),
+      box([x, 16.6, z], [3.6, 1.2, 3.6], 'steelPainted', 'steel', { color: '#b5892c', noCollide: true }),
+      box([x, 18.6, z], [2.6, 3, 2.6], 'steelPainted', 'steel', { color: GOLD, noCollide: true }),
+      box([x, 20.4, z], [3, 0.7, 3], 'steelPainted', 'steel', { color: '#b5892c', noCollide: true }),
+      box([x, 22.2, z], [1.9, 3, 1.9], 'steelPainted', 'steel', { color: GOLD, noCollide: true }),
+      box([x, 24.4, z], [1.1, 1.6, 1.1], 'steelPainted', 'steel', { color: '#b5892c', noCollide: true }),
+      // The saddle the chain actually passes over, at the top of the shaft.
+      box([x, 16.2, z], [2.2, 1.1, 4.4], 'steel', 'steel', { color: '#8d7a4c', noCollide: true }),
+    );
+    // Riveted panel lines up the shaft, so a 22-unit column is not one flat
+    // face from the deck.
+    for (let i = 0; i < 4; i++) {
+      out.push(
+        box([x, -3 + i * 5.4, z], [3.3, 0.4, 3.3], 'steelPainted', 'steel', {
+          color: '#b5892c',
+          noCollide: true,
+        }),
+      );
+    }
   }
+  // The portal between the two legs: a top strut, a lower strut, and a lattice
+  // of diagonals in the frame between them.
   out.push(
     box([x, 16.6, 0], [3, 1.2, 13], 'steelPainted', 'steel', { color: GOLD, noCollide: true }),
+    box([x, 12.6, 0], [2.4, 0.8, 13], 'steelPainted', 'steel', { color: GOLD, noCollide: true }),
     box([x, 9, 0], [2.2, 0.9, 13], 'steelPainted', 'steel', { color: GOLD, noCollide: true }),
   );
+  for (let i = 0; i < 4; i++) {
+    const zc = -CHAIN_Z + 2.45 + i * 2.45;
+    const diag = Math.hypot(2.45, 3.6);
+    for (const s of [1, -1]) {
+      out.push(
+        box([x, 14.6, zc - 1.225], [0.45, 0.45, diag], 'steelPainted', 'steel', {
+          rot: [s * Math.atan2(3.6, 2.45), 0, 0],
+          color: GOLD,
+          noCollide: true,
+        }),
+      );
+    }
+  }
   return out;
 };
 blocks.push(...tower(TOWER_S), ...tower(TOWER_N));
@@ -203,14 +247,33 @@ const CHAIN_K = 15 / (HALF_SPAN * HALF_SPAN);
 const chainY = (x: number) => 1 + CHAIN_K * (x - SAG_X) ** 2;
 
 for (const z of [-CHAIN_Z, CHAIN_Z]) {
-  for (let i = 0; i < HALF_SPAN; i++) {
-    const x0 = TOWER_S + i * 2;
+  // Three-unit links, not two. A shallow parabola over a 128-unit span is not
+  // measurably smoother at 64 chords than at 43, and the three blocks a link
+  // costs add up faster than the curve improves.
+  const LINK = 3;
+  for (let i = 0; i * LINK < TOWER_N - TOWER_S; i++) {
+    const x0 = TOWER_S + i * LINK;
     const y0 = chainY(x0);
-    const y1 = chainY(x0 + 2);
+    const y1 = chainY(x0 + LINK);
     blocks.push(
-      box([x0 + 1, (y0 + y1) / 2, z], [Math.hypot(2, y1 - y0), 0.36, 0.36], 'steelPainted', 'steel', {
-        rot: [0, 0, Math.atan2(y1 - y0, 2)],
+      // Two flat bars side by side rather than one round cable. An eyebar chain
+      // is exactly that — pairs of forged flats — and the doubling is half of
+      // why the Sisters look the way they do from the deck.
+      box([x0 + LINK / 2, (y0 + y1) / 2, z - 0.28], [Math.hypot(LINK, y1 - y0), 0.5, 0.16], 'steelPainted', 'steel', {
+        rot: [0, 0, Math.atan2(y1 - y0, LINK)],
         color: GOLD,
+        noCollide: true,
+      }),
+      box([x0 + LINK / 2, (y0 + y1) / 2, z + 0.28], [Math.hypot(LINK, y1 - y0), 0.5, 0.16], 'steelPainted', 'steel', {
+        rot: [0, 0, Math.atan2(y1 - y0, LINK)],
+        color: GOLD,
+        noCollide: true,
+      }),
+      // The pin plate at the joint. This is the other half: a chain is made of
+      // straight links with a visible bolted eye between each pair, and without
+      // the eye a run of chords is just a faceted cable.
+      box([x0, y0, z], [0.95, 0.95, 0.95], 'steel', 'steel', {
+        color: '#a8873c',
         noCollide: true,
       }),
     );

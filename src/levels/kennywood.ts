@@ -9,13 +9,16 @@ import { arcWalk, box, deg, dropLip, kerb, portalGate, slopeDeck } from './helpe
  * m/s; a fourteen-unit drop hands over about 20, because a rolling sphere only
  * keeps 1/1.4 of the height it spends.
  *
- *   1. The lift hill and the first drop. Twenty-two degrees up, thirty down.
- *      The crest turns fifty degrees in one corner, so the marble leaves the
- *      track there whether the player meant it to or not — that is the lesson.
+ *   1. The lift hill. Twenty-two degrees up, and the crest turns thirty-five
+ *      degrees in one corner, so the marble leaves the track there whether the
+ *      player meant it to or not — that is the lesson.
  *   2. The double dip, which is what the Jack Rabbit has been famous for since
- *      1920. Two hills, each launching about fourteen and eighteen units of
- *      flight, both landing back on their own descent. The track is six wide
- *      and railed the whole way: air is the point, falling off is not.
+ *      1920, and which is one descent rather than two hills: the first drop
+ *      eases out onto a level shelf and then falls away again at thirty-six
+ *      degrees. The break at the end of the shelf is the convex corner, and it
+ *      is the biggest launch on the ride. Then two ordinary hills after it. The
+ *      track is six wide and railed the whole way: air is the point, falling
+ *      off is not.
  *   3. The ravine. Eleven units of nothing, off a lip four units above the far
  *      side. Fifteen m/s clears it; the run into it hands over twenty. This is
  *      the only place in the level where the rails stop.
@@ -30,6 +33,79 @@ const entities: Entity[] = [];
 
 const TRACK_W = 6;
 const WOOD = '#8a6746';
+/** Grade the whole ride is built up from. Every post lands on it. */
+const GROUND = -14;
+const TIMBER = { noCollide: true, color: '#6d5136' } as const;
+
+/**
+ * The trestle under one length of track.
+ *
+ * This is the whole identity of a 1920s wooden coaster and it is not a rank of
+ * posts. It is a lattice: bents every seven units — two legs, a cap beam and two
+ * horizontal ledgers — and then, between every pair of bents and on both sides,
+ * a cross-brace drawn corner to corner. What a person pictures when they
+ * picture the Jack Rabbit is that woven wall of timber under the track, and a
+ * pair of bare stilts every six units reads as scaffolding instead.
+ *
+ * Tall bents get their bracing in two stacked panels rather than one. A single
+ * X over twenty-five units of leg is a thin diagonal line; two are a lattice.
+ */
+function trestle(from: Vec3, to: Vec3): Block[] {
+  const out: Block[] = [];
+  const run = Math.hypot(to[0] - from[0], to[2] - from[2]);
+  const n = Math.max(1, Math.round(run / 7));
+  const at = (t: number): Vec3 => [
+    from[0] + (to[0] - from[0]) * t,
+    from[1] + (to[1] - from[1]) * t,
+    from[2] + (to[2] - from[2]) * t,
+  ];
+  const bents: Vec3[] = [];
+  for (let i = 0; i <= n; i++) bents.push(at(i / n));
+
+  for (const p of bents) {
+    const h = p[1] - GROUND;
+    if (h < 1) continue;
+    for (const dz of [-TRACK_W / 2, TRACK_W / 2]) {
+      out.push(box([p[0], GROUND + h / 2, p[2] + dz], [0.5, h, 0.5], 'wood', 'default', TIMBER));
+    }
+    out.push(box([p[0], p[1] - 0.8, p[2]], [0.42, 0.42, TRACK_W + 0.8], 'wood', 'default', TIMBER));
+    // Two ledgers on a tall bent, one on a short one. Below about nine units
+    // the second is inside the cross-brace and costs a block for nothing.
+    for (const f of h > 9 ? [0.34, 0.67] : [0.5]) {
+      out.push(box([p[0], GROUND + h * f, p[2]], [0.34, 0.34, TRACK_W], 'wood', 'default', TIMBER));
+    }
+  }
+
+  for (let i = 0; i < n; i++) {
+    const a = bents[i];
+    const b = bents[i + 1];
+    const bay = Math.hypot(b[0] - a[0], b[2] - a[2]);
+    if (bay < 0.5) continue;
+    const yaw = Math.atan2(-(b[2] - a[2]), b[0] - a[0]);
+    const cx = (a[0] + b[0]) / 2;
+    const cz = (a[2] + b[2]) / 2;
+    const h = (a[1] + b[1]) / 2 - GROUND;
+    if (h < 2) continue;
+    const panels = h > 14 ? [[0.04, 0.5], [0.5, 0.96]] : [[0.06, 0.94]];
+    for (const [f0, f1] of panels) {
+      const y0 = GROUND + h * f0;
+      const y1 = GROUND + h * f1;
+      const diag = Math.hypot(bay, y1 - y0);
+      const ang = Math.atan2(y1 - y0, bay);
+      for (const s of [1, -1]) {
+        for (const dz of [-TRACK_W / 2, TRACK_W / 2]) {
+          out.push(
+            box([cx, (y0 + y1) / 2, cz + dz], [diag, 0.28, 0.28], 'wood', 'default', {
+              ...TIMBER,
+              rot: [0, yaw, s * ang],
+            }),
+          );
+        }
+      }
+    }
+  }
+  return out;
+}
 
 /**
  * One length of coaster track: deck plus both rails. The rails are what turn
@@ -53,22 +129,7 @@ function trackSeg(from: Vec3, to: Vec3, rails = true): Block[] {
       );
     }
   }
-  // Trestle bents, the thing that makes a wooden coaster look like one.
-  const n = Math.max(2, Math.round(Math.hypot(to[0] - from[0], to[2] - from[2]) / 6));
-  for (let i = 0; i < n; i++) {
-    const t = (i + 0.5) / n;
-    const x = from[0] + (to[0] - from[0]) * t;
-    const z = from[2] + (to[2] - from[2]) * t;
-    const y = from[1] + (to[1] - from[1]) * t;
-    for (const dz of [-TRACK_W / 2, TRACK_W / 2]) {
-      out.push(
-        box([x, (y - 14) / 2, z + dz], [0.5, y + 14, 0.5], 'wood', 'default', {
-          noCollide: true,
-          color: '#6d5136',
-        }),
-      );
-    }
-  }
+  out.push(...trestle(from, to));
   return out;
 }
 
@@ -79,10 +140,18 @@ const PROFILE: Array<[number, number]> = [
   [-16, 0], // station
   [2, 0], // foot of the lift
   [42, 16], // crest, 21.8 degrees of lift
-  [66, 2], // bottom of the first drop, 30.3 degrees
-  [84, 8], // crest of the first dip
-  [108, 0], // valley
-  [126, 7], // crest of the second dip
+  // The double dip. This is the manoeuvre the Jack Rabbit has been famous for
+  // since 1920 and it is one descent, not two hills: the first drop eases out
+  // onto a shelf, holds it just long enough for the train to be level again,
+  // and then falls away a second time and harder. The break at the end of the
+  // shelf is convex, which is where the marble leaves the track — the airtime
+  // is a consequence of the shape, exactly as it is on the real ride.
+  [54, 11], // out of the first drop, 22.6 degrees
+  [62, 9.4], // the shelf between the dips, 11.3 degrees
+  [76, -1], // and away again at 36.6 into the valley
+  [92, 6], // crest
+  [112, -1], // valley
+  [130, 6], // crest of the last hill
   [150, -3], // valley, and the fastest point on the ride
   [162, 1], // the launch lip
 ];
@@ -145,7 +214,7 @@ entities.push({ kind: 'startPad', pos: [-12, 0, 0] });
 // marble cannot reach the vertex — it rests 0.45 up, wedged between the two
 // faces. Respawning is `pos` plus one radius, so at zero the player came back
 // inside the track and had to be squeezed out of it.
-entities.push({ kind: 'checkpoint', pos: [108, 0.35, 0] });
+entities.push({ kind: 'checkpoint', pos: [112, 0.35, 0] });
 
 // --------------------------------------------------------------------- gems
 // Crest gems sit on the crest itself. It is tempting to hang them out in the
@@ -160,13 +229,17 @@ entities.push(
   { kind: 'gem', pos: [24, 9.3, 0] },
   { kind: 'gem', pos: [36, 14.1, 0] },
   crestGem(42, 16),
-  // Far enough down the drop that it is collected whether the marble lands
-  // short of it and rolls through, or is still flying and passes through it.
-  { kind: 'gem', pos: [63, 4.3, 0] },
-  { kind: 'gem', pos: [70, 3.9, 0] },
-  crestGem(84, 8),
-  { kind: 'gem', pos: [108, 0.6, 0] },
-  crestGem(126, 7),
+  // On the shelf of the double dip. Everything between the crest and here is
+  // concave, so the marble is still on the planking at this point whatever
+  // speed it left at — which is what makes this the one collectable place on
+  // the drop rather than a guess at where an arc goes.
+  crestGem(62, 9.4),
+  // In the valley at the foot of the second dip. Valleys are the other
+  // reliable point: a V catches everything that comes down into it.
+  { kind: 'gem', pos: [76, 0.2, 0] },
+  crestGem(92, 6),
+  { kind: 'gem', pos: [112, 0.4, 0] },
+  crestGem(130, 6),
   { kind: 'gem', pos: [150, -2.4, 0] },
 );
 
@@ -245,9 +318,33 @@ blocks.push(
 );
 entities.push({ kind: 'gem', pos: [178, 2.5, -16] }, { kind: 'endPad', pos: [178, 2, -6] });
 
+// --------------------------------------------------------------- the ground
+// The park floor the whole structure stands on. Every post in the trestle lands
+// at -14, and until this was here they all landed on nothing: a wooden coaster
+// whose legs stop in mid-air is a drawing of a coaster.
+blocks.push(
+  box([90, GROUND - 3, -26], [270, 6, 120], 'grass', 'default', {
+    noCollide: true,
+    color: '#3f5433',
+  }),
+);
+// And the bluff it stands on. Kennywood is on a shelf a hundred feet above the
+// Monongahela, which is the reason the ravine at the end of the ride exists.
+for (let i = 0; i < 5; i++) {
+  blocks.push(
+    box([90 - i * 6, GROUND - 8 - i * 5, 42 + i * 8], [270 - i * 20, 14, 22], 'grass', 'default', {
+      noCollide: true,
+      color: i % 2 ? '#37492c' : '#3d5233',
+    }),
+  );
+}
+
 // ------------------------------------------------------------------ the park
 // The Racer running alongside, the entrance arrow, and a stand of trees. All
-// silhouette, no collision — the ride is the level.
+// silhouette, no collision — the ride is the level. The Racer gets the same
+// lattice as the Jack Rabbit at half the density: it is sixty units away and
+// its only job is to say that this is a park full of wooden coasters, not one
+// wooden coaster in a field.
 for (let i = 0; i < 22; i++) {
   const x = -30 + i * 8;
   const y = 9 + Math.sin(i * 0.72) * 7;
@@ -259,12 +356,27 @@ for (let i = 0; i < 22; i++) {
         color: '#7d5f42',
       }),
     );
-    blocks.push(
-      box([x + 4.5, (y - 2) / 2, z], [0.5, y + 2, 0.5], 'wood', 'default', {
-        noCollide: true,
-        color: '#6d5136',
-      }),
-    );
+    for (const dx of [0, 9]) {
+      const h = (dx ? yn : y) + 2;
+      blocks.push(
+        box([x + dx, (dx ? yn : y) - h / 2, z], [0.5, h, 0.5], 'wood', 'default', {
+          noCollide: true,
+          color: '#6d5136',
+        }),
+      );
+    }
+    const mid = (y + yn) / 2;
+    const diag = Math.hypot(9, mid + 2);
+    const ang = Math.atan2(mid + 2, 9);
+    for (const s of [1, -1]) {
+      blocks.push(
+        box([x + 4.5, (mid - 2) / 2, z], [diag, 0.28, 0.28], 'wood', 'default', {
+          noCollide: true,
+          rot: [0, 0, s * ang],
+          color: '#6d5136',
+        }),
+      );
+    }
   }
 }
 

@@ -1,5 +1,5 @@
 import type { Block, Entity, LevelDef, Vec3 } from '../game/types';
-import { arcWalk, box, deg, downtownSkyline, lampRow, pier, portalGate, stairFlight } from './helpers';
+import { arcWalk, box, deg, downtownSkyline, facadeRow, lampRow, pier, portalGate, stairFlight } from './helpers';
 
 /**
  * Level 2 — Point State Park.
@@ -30,15 +30,138 @@ const RING_W = 4.5;
 const BASIN_Y = -1;
 
 // ------------------------------------------------------------- the confluence
-// One water plane under everything. At the Point the rivers are the ground
-// plane, so there is no reason to model three of them.
-// Deliberately darker than the fountain basin, which is the other water in this
-// level and the only water in it you are allowed to stand in. Two sheets of
-// water a unit apart, one a five-second wade and one the end of the run, cannot
-// be the same colour.
+//
+// One water plane under everything, and that used to be the whole of it — which
+// meant the level called "the Point" had no point in it. A confluence is not
+// water, it is two channels and a wedge of land between them ending in a tip,
+// and none of that exists unless there is a far bank on each side. So: the park
+// is the wedge, and the two banks below define the Allegheny to the north and
+// the Monongahela to the south, meeting off the tip and running away west as
+// the Ohio.
+//
+// The water is deliberately darker than the fountain basin, which is the other
+// water in this level and the only water in it you are allowed to stand in.
 blocks.push(
-  box([20, -2.4, 0], [420, 0.4, 420], 'water', 'water', { noCollide: true, color: '#2f4a56' }),
+  // uvScale 0.09: the water texture tiles at 1.5 repeats per unit by default,
+  // which over five hundred units of river is a moire of ripples that reads as
+  // corduroy rather than as water. At a tile every eleven units it reads as a
+  // river from the air and still has movement in it from the bank.
+  box([20, -2.4, 0], [520, 0.4, 460], 'water', 'water', {
+    noCollide: true,
+    color: '#1d2c35',
+    uvScale: 0.35,
+  }),
 );
+
+/**
+ * A far bank: a low shelf of land with a river wall along its water edge.
+ * `side` is -1 for the north shore across the Allegheny, +1 for the south.
+ *
+ * They sit at -0.6, below the park's walking level, and thirty-five units of
+ * open water separate them from the nearest thing a player can stand on. Both
+ * matter: a flat plane of land at exactly the height of the lawn, close enough
+ * to look continuous with it, is a promise of floor that a marble cannot cash.
+ */
+function farBank(side: -1 | 1, shore: number, color: string): Block[] {
+  const z = side * shore;
+  return [
+    box([40, -6, z + side * 60], [520, 11, 120], 'grass', 'default', { noCollide: true, color }),
+    // The wall the river actually meets, a shade paler, which is what fixes the
+    // waterline for the eye at this distance.
+    box([40, -1.2, z], [520, 3, 2.4], 'sandstone', 'default', { noCollide: true, color: '#8b8478' }),
+  ];
+}
+blocks.push(...farBank(-1, 62, '#4a6b3c'), ...farBank(1, 66, '#43603a'));
+// The North Shore across the Allegheny: the ballpark and the stadium, which is
+// what is actually over there, and the only thing that stops the far bank being
+// a green stripe.
+blocks.push(...facadeRow([-30, -0.6, -78], [1, 0, 0], 7, 22, 26, ['#6d6f74', '#7a7c80', '#5f6166']));
+for (const [bx, bw] of [[70, 40], [150, 46]] as const) {
+  blocks.push(
+    box([bx, 5, -84], [bw, 11, 40], 'concrete', 'default', { noCollide: true, color: '#9a9d9f' }),
+    box([bx, 10.5, -84], [bw + 4, 1.2, 44], 'steelPainted', 'default', { noCollide: true, color: '#5b6470' }),
+    box([bx, -0.4, -66], [bw, 0.4, 28], 'grass', 'default', { noCollide: true, color: '#4f7a3f' }),
+  );
+}
+// Mount Washington behind the south shore, which is the wall this whole valley
+// sits in — and, four hundred feet up it, the Duquesne Incline.
+for (let i = 0; i < 7; i++) {
+  blocks.push(
+    box([-40 + i * 46, 12, 128 + (i % 2) * 10], [48, 34, 44], 'grass', 'default', {
+      noCollide: true,
+      color: i % 2 ? '#3d5233' : '#44593a',
+    }),
+  );
+}
+
+/**
+ * A bowstring arch bridge: deck, tied arch over it, and hangers between. Both
+ * bridges at the Point are this shape and both are painted the Sisters' gold,
+ * and they are the single most recognisable thing in an aerial of the
+ * confluence — the two of them crossing within a few hundred feet of the tip.
+ */
+function archBridge(x: number, z0: number, z1: number, deckY: number, rise: number): Block[] {
+  const out: Block[] = [];
+  const mid = (z0 + z1) / 2;
+  const span = Math.abs(z1 - z0);
+  const gold = '#d6a638';
+  out.push(
+    box([x, deckY, mid], [11, 0.8, span], 'steelPainted', 'default', { noCollide: true, color: gold }),
+    box([x, deckY + 5, mid], [11, 0.6, span], 'steelPainted', 'default', { noCollide: true, color: '#b5892c' }),
+  );
+  // The arch, as a chain of chords either side of the roadway.
+  const segs = 14;
+  const arcY = (t: number) => deckY + 5 + rise * Math.sin(Math.PI * t);
+  for (const dx of [-4.6, 4.6]) {
+    for (let i = 0; i < segs; i++) {
+      const t0 = i / segs;
+      const t1 = (i + 1) / segs;
+      const za = z0 + (z1 - z0) * t0;
+      const zb = z0 + (z1 - z0) * t1;
+      const ya = arcY(t0);
+      const yb = arcY(t1);
+      out.push(
+        box([x + dx, (ya + yb) / 2, (za + zb) / 2], [0.8, 0.8, Math.hypot(zb - za, yb - ya)], 'steelPainted', 'default', {
+          noCollide: true,
+          rot: [Math.atan2(yb - ya, zb - za), 0, 0],
+          color: gold,
+        }),
+      );
+      if (i % 2 === 1) {
+        out.push(
+          box([x + dx, (deckY + 5 + ya) / 2, za], [0.3, ya - deckY - 5, 0.3], 'steel', 'default', {
+            noCollide: true,
+            color: '#9a8a6a',
+          }),
+        );
+      }
+    }
+  }
+  // Piers into the river at both ends. Eight by five, not twelve by seven: at
+  // the larger size the near one filled a third of the frame from the terrace
+  // and read as a wall rather than as something a bridge stands on.
+  for (const pz of [z0 + span * 0.07, z1 - span * 0.07]) {
+    out.push(
+      box([x, (deckY - 4) / 2, pz], [8, deckY + 4, 5], 'sandstone', 'default', {
+        noCollide: true,
+        color: '#7d766a',
+      }),
+      box([x, deckY - 0.9, pz], [9, 0.9, 6], 'sandstone', 'default', {
+        noCollide: true,
+        color: '#a49a88',
+      }),
+    );
+  }
+  return out;
+}
+// The Fort Duquesne over the Allegheny and the Fort Pitt over the Mon, both
+// landing on the park within a hundred feet of each other, exactly as they do.
+// Landed well out over the water rather than on the shore itself. They are
+// non-colliding, and a twelve-unit abutment standing at walking height five
+// units off the lawn edge is exactly the kind of decoration a player tries to
+// roll onto.
+blocks.push(...archBridge(52, -34, -74, 15, 11));
+blocks.push(...archBridge(68, 36, 78, 15, 11));
 
 // -------------------------------------------------------------- the great lawn
 // A wedge of land widening eastward, which is the actual shape of the park.
@@ -48,6 +171,21 @@ for (let i = 0; i < 6; i++) {
   const cx = 36.5 + i * 13;
   const hw = 14 + i * 2.6;
   blocks.push(box([cx, -0.5, 0], [13, 1, hw * 2], 'grass', 'grass'));
+  // A masonry river wall down both shores of the wedge, stepping out with it.
+  // Without them the park is a green slab that stops, and a wedge of land that
+  // stops is not a shore — the two lines of wall converging westward are what
+  // actually draw the shape of the Point from anywhere on the course.
+  for (const side of [-1, 1]) {
+    blocks.push(
+      box([cx, -0.15, side * (hw + 0.35)], [13, 1.3, 0.9], 'sandstone', 'default', {
+        color: '#a89e8c',
+      }),
+      box([cx, -1.9, side * (hw + 0.6)], [13, 3, 1.4], 'sandstone', 'default', {
+        noCollide: true,
+        color: '#7d766a',
+      }),
+    );
+  }
 }
 
 // Riverbank parapet, with a gap left open exactly where the riverwalk leaves.
@@ -326,8 +464,11 @@ export const pointLevel: LevelDef = {
     top: '#2f5f9e',
     bottom: '#f4c07c',
     fog: '#e3b189',
-    fogNear: 60,
-    fogFar: 320,
+    // The far bank of each river is sixty units out and the hills behind it are
+    // a hundred and forty: at a fog far plane of 320 the confluence dissolved
+    // into the sunset before it had drawn its own shape.
+    fogNear: 110,
+    fogFar: 560,
     sunDir: [-0.88, 0.26, 0.12],
     sunColor: '#ffd6a0',
     ambient: '#5f6a80',
